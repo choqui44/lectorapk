@@ -107,7 +107,7 @@ input[type=range]{width:100%;accent-color:var(--pencil)}
 
 /* hoja */
 .sheet-frame{background:var(--sunk);border:1px solid var(--line);border-radius:var(--radius-m);padding:16px;display:flex;justify-content:center;overflow:auto}
-.sheet-frame svg{width:100%;max-width:620px;height:auto;background:#fff;box-shadow:0 1px 0 var(--line),0 10px 24px rgba(0,0,0,.08)}
+.sheet-frame > svg{width:100%;max-width:620px;height:auto;background:#fff;box-shadow:0 1px 0 var(--line),0 10px 24px rgba(0,0,0,.08)}
 
 /* escaneo */
 .cam{position:relative;background:#101214;border-radius:var(--radius-m);overflow:hidden;min-height:220px;display:flex;align-items:center;justify-content:center}
@@ -229,7 +229,7 @@ table.res tbody tr:hover{background:var(--sunk)}
   body{background:#fff}
   body > *:not(#printArea){display:none!important}
   #printArea{display:block!important}
-  #printArea svg{width:210mm;height:297mm;display:block}
+  #printArea > svg{width:210mm;height:297mm;display:block}
 }
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:560px){ :root:not([data-view="pc"]) .sync{display:none} :root:not([data-view="pc"]) .wrap{padding:0 12px} :root:not([data-view="pc"]) .panel{padding:14px} :root:not([data-view="pc"]) .big-note{font-size:2.6rem} :root:not([data-view="pc"]) .bar-row{grid-template-columns:90px 1fr 50px} }
@@ -245,21 +245,36 @@ const OMR = (() => {
   const ID_ORDER = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0], OMR_ID_ORDER = ID_ORDER;
   const FORMATS = [{ cols: 3, slots: 2, p: 39, r: 13 }, { cols: 4, slots: 3, p: 30, r: 10.5 }];
 
+  // La altura de la cartilla se ajusta a su contenido (para imprimir varias por hoja)
   function buildLayout(nQ, idDigits) {
     const nBlocks = Math.ceil(nQ / 10);
-    let F = null, idSlots = 0;
+    let F = null, idSlots = 0, S = 1;
     for (const f of FORMATS) {
       const colW = 860 / f.cols, idW = f.p * 0.9 + idDigits * f.p;
       const s = idDigits > 0 ? Math.ceil(idW / colW) : 0;
       if (s > f.cols) continue;
-      if (f.cols * f.slots - s >= nBlocks) { F = f; idSlots = s; break; }
+      let slots = 1; while (f.cols * slots - s < nBlocks) slots++;
+      if (slots <= f.slots) { F = f; idSlots = s; S = slots; break; }
     }
-    if (!F) { F = FORMATS[1]; idSlots = idDigits > 0 ? Math.ceil((F.p * 0.9 + idDigits * F.p) / (860 / F.cols)) : 0; }
-    const { cols, slots, p, r } = F, colW = 860 / cols, gap = p * 0.6, top = 262;
-    const slotY = s => top + s * (11 * p + gap);
-    const L = { W, H, r, p, markers: [{ x: 58, y: 58 }, { x: 942, y: 58 }, { x: 942, y: 1356 }, { x: 58, y: 1356 }], refs: [], blocks: [], q: [], id: [], idDigits };
+    if (!F) { F = FORMATS[1]; idSlots = idDigits > 0 ? Math.ceil((F.p * 0.9 + idDigits * F.p) / (860 / F.cols)) : 0; S = F.slots; }
+    const { cols, p, r } = F, colW = 860 / cols, gap = p * 0.6, top = 262;
+    // asignación en columnas (como ZipGrade): el código ocupa el primer lugar
+    const cells = []; let k = 0;
+    for (let c = 0; c < cols; c++) for (let s = 0; s < S; s++) {
+      if (s === 0 && c < idSlots) { cells.push({ c, s, id: true }); continue; }
+      if (k < nBlocks) { cells.push({ c, s, k, rows: Math.min(10, nQ - k * 10) }); k++; }
+    }
+    const usedCols = Math.max(...cells.map(x => x.c)) + 1;
+    const LW = S === 1 && usedCols < cols ? Math.round(Math.max(600, 140 + usedCols * colW)) : W;
+    const xOff = (LW - 140 - usedCols * colW) / 2;
+    const slotRows = Array.from({ length: S }, (_, s) => Math.max(...cells.filter(x => x.s === s).map(x => x.id ? 10 : x.rows), 1));
+    const slotY = []; let y = top;
+    for (let s = 0; s < S; s++) { slotY.push(y); y += (slotRows[s] + 1) * p + gap; }
+    const bottom = y - gap;
+    const my = Math.round(bottom + 64), Hh = my + 58;
+    const L = { W: LW, H: Hh, r, p, orient: { x: 140, y: 58, s: 26 }, markers: [{ x: 58, y: 58 }, { x: LW - 58, y: 58 }, { x: LW - 58, y: my }, { x: 58, y: my }], refs: [], blocks: [], q: [], id: [], idDigits, legendY: my - 8 };
     if (idDigits > 0) {
-      const idW = p * 0.9 + idDigits * p, x0 = 70 + (idSlots * colW - idW) / 2, y0 = slotY(0);
+      const idW = p * 0.9 + idDigits * p, x0 = 70 + xOff + (idSlots * colW - idW) / 2, y0 = slotY[0];
       L.idBox = { x: x0, y: y0, w: idW, h: 11 * p, labelX: x0 + p * 0.4 };
       L.idWrite = [];
       for (let d = 0; d < idDigits; d++) {
@@ -269,23 +284,18 @@ const OMR = (() => {
       }
       L.idRows = ID_ORDER.map((v, j) => ({ v, y: y0 + p * 1.5 + j * p }));
     }
-    let k = 0;
     const blockW = p * 5.55 + r;
-    for (let c = 0; c < cols && k < nBlocks; c++) {
-      for (let s = 0; s < slots && k < nBlocks; s++) {
-        if (s === 0 && c < idSlots) continue;
-        const ox = 70 + c * colW + (colW - blockW) / 2, y0 = slotY(s), hy = y0 + p * 0.5;
-        const ref = { x: ox + p * 0.6, y: hy, s: p * 0.55 };
-        L.refs.push(ref);
-        L.blocks.push({ k, ox, y0, hy, ref, letters: OPTS.map((_, j) => ({ x: ox + p * 1.55 + j * p, y: hy })) });
-        for (let j = 0; j < 10; j++) {
-          const n = k * 10 + j + 1; if (n > nQ) break;
-          const cy = y0 + p * 1.5 + j * p;
-          L.q.push({ n, block: k, labelX: ox + p * 1.02, y: cy, b: OPTS.map((_, m) => ({ x: ox + p * 1.55 + m * p, y: cy })) });
-        }
-        k++;
+    cells.filter(x => !x.id).forEach(cell => {
+      const ox = 70 + xOff + cell.c * colW + (colW - blockW) / 2, y0 = slotY[cell.s], hy = y0 + p * 0.5;
+      const ref = { x: ox + p * 0.6, y: hy, s: p * 0.55 };
+      L.refs.push(ref);
+      L.blocks.push({ k: cell.k, ox, y0, hy, ref, letters: OPTS.map((_, j) => ({ x: ox + p * 1.55 + j * p, y: hy })) });
+      for (let j = 0; j < cell.rows; j++) {
+        const n = cell.k * 10 + j + 1, cy = y0 + p * 1.5 + j * p;
+        L.q.push({ n, block: cell.k, labelX: ox + p * 1.02, y: cy, b: OPTS.map((_, m) => ({ x: ox + p * 1.55 + m * p, y: cy })) });
       }
-    }
+    });
+    L.q.sort((a, b) => a.n - b.n);
     return L;
   }
 
@@ -312,7 +322,7 @@ const OMR = (() => {
 
   function components(b, w, h) {
     const lab = new Int32Array(w * h), out = [], stack = new Int32Array(w * h);
-    const big = Math.max(w, h), minSide = big * 0.012, maxSide = big * 0.14;
+    const big = Math.max(w, h), minSide = big * 0.009, maxSide = big * 0.14;
     let id = 0;
     for (let p = 0; p < b.length; p++) {
       if (!b[p] || lab[p]) continue;
@@ -393,27 +403,94 @@ const OMR = (() => {
     return { x, y };
   }
 
-  function locate(g, w, h, L, sens) {
-    const b = binarize(g, w, h, sens);
-    const cands = components(b, w, h).sort((a, c) => c.area - a.area).slice(0, 16);
-    if (cands.length < 4) return { ok: false, b, err: 'No se encuentran los 4 cuadros negros de las esquinas.' };
-    const pick = f => cands.reduce((best, c) => (f(c) < f(best) ? c : best));
-    const corners = [pick(c => c.x + c.y), pick(c => c.y - c.x), pick(c => -(c.x + c.y)), pick(c => c.x - c.y)];
-    if (new Set(corners).size < 4) return { ok: false, b, err: 'Encuadra la hoja completa: faltan esquinas.' };
-    const areas = corners.map(c => c.area);
-    if (Math.max(...areas) / Math.min(...areas) > 5) return { ok: false, b, err: 'Las esquinas no coinciden; endereza la cámara.' };
-    for (let i = 0; i < 4; i++) if (cross(corners[i], corners[(i + 1) % 4], corners[(i + 2) % 4]) <= 0) return { ok: false, b, err: 'La hoja está muy inclinada.' };
-    if (Math.hypot(corners[0].x - corners[2].x, corners[0].y - corners[2].y) < Math.max(w, h) * 0.35) return { ok: false, b, err: 'Acércate más: la hoja se ve muy pequeña.' };
-    let best = null;
-    for (let rot = 0; rot < 4; rot++) {
-      const dst = [0, 1, 2, 3].map(i => corners[(i + rot) % 4]);
-      const map = homography(L.markers, dst); if (!map) continue;
-      let sum = 0;
-      for (const r of L.refs) { const c = map(r.x, r.y); if (findRef(b, w, h, c.x, c.y, r.s * scaleAt(map, r.x, r.y))) sum++; }
-      const f = sum / L.refs.length;
-      if (!best || f > best.f) best = { f, map, dst };
+  // Comprueba que exista la línea horizontal del recuadro de datos (y = yy en la cartilla)
+  function lineScore(b, w, h, map, yy, LW) {
+    let hit = 0, n = 0;
+    const xs = [120, 140, 160, 180, 200, 220, 240, 260].flatMap(x => [x, LW - x]);
+    for (const x of xs) {
+      n++;
+      let dark = false;
+      for (let dy = -12; dy <= 12 && !dark; dy += 1) {
+        const c = map(x, yy + dy), px = Math.round(c.x), py = Math.round(c.y);
+        if (px >= 0 && py >= 0 && px < w && py < h && b[py * w + px]) dark = true;
+      }
+      if (dark) hit++;
     }
-    if (!best || best.f < 0.5) return { ok: false, b, err: 'No se ven los cuadritos ■ de la hoja. ¿Es la hoja de esta evaluación?' };
+    return hit / n;
+  }
+
+  // Busca todas las cartillas de la foto (una hoja puede traer varias)
+  function locateAll(g, w, h, L, sens) {
+    const b = binarize(g, w, h, sens);
+    const cands = components(b, w, h).sort((a, c) => c.area - a.area).slice(0, 64);
+    if (cands.length < 4) return { ok: false, b, sheets: [], err: 'No se encuentran los 4 cuadros negros de las esquinas.' };
+    const vy = L.markers[3].y - L.markers[0].y, vx = L.W - 116, ratio = vx / vy, big = Math.max(w, h), quads = [];
+    const n = cands.length;
+    const inside = (pt, C) => { for (let t = 0; t < 4; t++) if (cross(C[t], C[(t + 1) % 4], pt) < 0) return false; return true; };
+    const seen = new Set();
+    // cada cuadro de esquina se combina con sus vecinos más cercanos de tamaño parecido
+    for (let i = 0; i < n; i++) {
+      const A = cands[i];
+      const nb = cands.map((c, j) => ({ c, j, d: Math.hypot(c.x - A.x, c.y - A.y) }))
+        .filter(o => o.j !== i && o.c.area >= A.area / 2.5 && o.c.area <= A.area * 2.5)
+        .sort((x, y) => x.d - y.d).slice(0, 16);
+      for (let a1 = 0; a1 < nb.length; a1++) for (let a2 = a1 + 1; a2 < nb.length; a2++) for (let a3 = a2 + 1; a3 < nb.length; a3++) {
+        const idx = [i, nb[a1].j, nb[a2].j, nb[a3].j].sort((x, y) => x - y), key = idx.join(',');
+        if (seen.has(key)) continue; seen.add(key);
+        const q = idx.map(t => cands[t]);
+        const ar = q.map(c => c.area);
+        if (Math.max(...ar) / Math.min(...ar) > 2.5) continue;
+        const pick = f => q.reduce((best, c) => (f(c) < f(best) ? c : best));
+        const C = [pick(c => c.x + c.y), pick(c => c.y - c.x), pick(c => -(c.x + c.y)), pick(c => c.x - c.y)];
+        if (new Set(C).size < 4) continue;
+        let convex = true; for (let t = 0; t < 4; t++) if (cross(C[t], C[(t + 1) % 4], C[(t + 2) % 4]) <= 0) { convex = false; break; }
+        if (!convex) continue;
+        const d = (a, c) => Math.hypot(a.x - c.x, a.y - c.y);
+        const wq = (d(C[0], C[1]) + d(C[3], C[2])) / 2, hq = (d(C[0], C[3]) + d(C[1], C[2])) / 2;
+        if (Math.min(wq, hq) < big * 0.08) continue;
+        // lados opuestos parecidos (una cartilla vista en perspectiva moderada)
+        if (Math.abs(d(C[0], C[1]) / d(C[3], C[2]) - 1) > 0.35 || Math.abs(d(C[0], C[3]) / d(C[1], C[2]) - 1) > 0.35) continue;
+        const side = Math.sqrt(Math.max(...ar)), rq = wq / hq;
+        const okScale = [wq * 56 / vx, hq * 56 / vy, hq * 56 / vx, wq * 56 / vy].some(e => Math.abs(side / e - 1) < 0.4);
+        if (!okScale) continue;
+        if (!(Math.abs(rq / ratio - 1) < 0.25 || Math.abs(rq * ratio - 1) < 0.25)) continue;
+        // una cartilla real no tiene otros cuadros de esquina dentro
+        if (cands.some(c => !q.includes(c) && c.area >= Math.min(...ar) / 2 && inside(c, C))) continue;
+        quads.push({ C, area: wq * hq });
+      }
+    }
+    const scored = [];
+    for (const qd of quads) {
+      let best = null;
+      for (let rot = 0; rot < 4; rot++) {
+        const dst = [0, 1, 2, 3].map(i => qd.C[(i + rot) % 4]);
+        const map = homography(L.markers, dst); if (!map) continue;
+        const oc = map(L.orient.x, L.orient.y), of = fillAt(b, w, h, oc.x, oc.y, Math.max(1.2, L.orient.s * 0.32 * scaleAt(map, L.orient.x, L.orient.y)));
+        if (of < 0.7) continue;
+        const l1 = lineScore(b, w, h, map, 108, L.W), l2 = lineScore(b, w, h, map, 220, L.W);
+        if (l1 < 0.4 || l2 < 0.4 || l1 + l2 < 1.1) continue;
+        let hit = 0;
+        for (const r of L.refs) { const c = map(r.x, r.y); if (findRef(b, w, h, c.x, c.y, r.s * scaleAt(map, r.x, r.y))) hit++; }
+        const f = hit / L.refs.length;
+        if (!best || f > best.f) best = { f, map, dst };
+      }
+      if (best && best.f >= 0.5) scored.push({ ...best, area: qd.area, C: qd.C });
+    }
+    scored.sort((a, c) => (c.f - a.f) || (c.area - a.area));
+    const center = C => ({ x: C.reduce((a, c) => a + c.x, 0) / 4, y: C.reduce((a, c) => a + c.y, 0) / 4 });
+    const chosen = [];
+    for (const sc of scored) {
+      if (chosen.some(o => inside(center(sc.C), o.C) || inside(center(o.C), sc.C) || sc.C.some(c => o.C.includes(c)))) continue;
+      chosen.push(sc);
+    }
+    if (!chosen.length) return { ok: false, b, sheets: [], err: quads.length ? 'No se ven los cuadritos ■ de la hoja. ¿Es la hoja de esta evaluación?' : 'Encuadra la cartilla completa con sus 4 cuadros negros.' };
+    const sheets = chosen.map(ch => refine(b, w, h, L, ch)).sort((a, c) => (a.center.y - c.center.y) || (a.center.x - c.center.x));
+    // orden de lectura: por filas de arriba abajo y de izquierda a derecha
+    sheets.sort((a, c) => Math.abs(a.center.y - c.center.y) > big * 0.08 ? a.center.y - c.center.y : a.center.x - c.center.x);
+    return { ok: true, b, sheets };
+  }
+
+  function refine(b, w, h, L, best) {
     let map = best.map;
     const src = [...L.markers], dst = [...best.dst];
     let found = 0;
@@ -422,7 +499,6 @@ const OMR = (() => {
       if (f) { src.push(r); dst.push(f); found++; }
     }
     if (found >= 2) { const m2 = homography(src, dst); if (m2) map = m2; }
-    // corrección local para papel curvado: residuos interpolados por distancia
     const res = src.map((s, i) => { const m = map(s.x, s.y); return { x: s.x, y: s.y, dx: dst[i].x - m.x, dy: dst[i].y - m.y }; });
     const refined = (x, y) => {
       const m = map(x, y);
@@ -430,7 +506,15 @@ const OMR = (() => {
       for (const q of res) { const k = 1 / ((x - q.x) ** 2 + (y - q.y) ** 2 + 900); sw += k; dx += q.dx * k; dy += q.dy * k; }
       return { x: m.x + dx / sw, y: m.y + dy / sw };
     };
-    return { ok: true, b, map: refined, corners: best.dst, refsFound: found, refsTotal: L.refs.length };
+    const cx = best.dst.reduce((a, c) => a + c.x, 0) / 4, cy = best.dst.reduce((a, c) => a + c.y, 0) / 4;
+    return { b, map: refined, corners: best.dst, center: { x: cx, y: cy }, refsFound: found, refsTotal: L.refs.length };
+  }
+
+  // Compatibilidad: devuelve la primera cartilla encontrada
+  function locate(g, w, h, L, sens) {
+    const r = locateAll(g, w, h, L, sens);
+    if (!r.ok) return { ok: false, b: r.b, err: r.err };
+    return { ok: true, ...r.sheets[0], count: r.sheets.length };
   }
 
   // Umbral automático (Otsu) con los rellenos de todos los círculos de la hoja
@@ -523,8 +607,8 @@ const OMR = (() => {
     return { fills, answers: dec.map(d => d.a), doubts: dec.map((d, i) => d.doubt ? i : -1).filter(i => i >= 0), id, idDoubt, T };
   }
 
-  function rectify(rgba, w, h, map, outW) {
-    const outH = Math.round(outW * H / W), s = W / outW, out = new Uint8ClampedArray(outW * outH * 4);
+  function rectify(rgba, w, h, map, outW, LH, LW) {
+    const lw = LW || W, outH = Math.round(outW * (LH || H) / lw), s = lw / outW, out = new Uint8ClampedArray(outW * outH * 4);
     for (let y = 0; y < outH; y++) for (let x = 0; x < outW; x++) {
       const p = map((x + 0.5) * s, (y + 0.5) * s);
       const sx = Math.min(w - 1, Math.max(0, Math.round(p.x))), sy = Math.min(h - 1, Math.max(0, Math.round(p.y)));
@@ -535,7 +619,7 @@ const OMR = (() => {
     return { data: out, w: outW, h: outH };
   }
 
-  return { W, H, OPTS, ID_ORDER, buildLayout, grayFromRGBA, binarize, locate, readMarks, decide, rectify, homography };
+  return { W, H, OPTS, ID_ORDER, buildLayout, grayFromRGBA, binarize, locate, locateAll, readMarks, decide, rectify, homography };
 })();
 /* ===== Utilidades ===== */
 const $ = (s, r = document) => r.querySelector(s);
@@ -676,17 +760,19 @@ function scaleLabel(ex) { return ex.scale > 0 ? '/' + ex.scale : 'pts'; }
 function sheetSVG(ex, fill) {
   const L = layoutOf(ex), p = L.p, r = L.r, o = [];
   const fs = Math.round(p * 0.42);
-  o.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1414" width="1000" height="1414" font-family="Arial, Helvetica, sans-serif">`);
-  o.push(`<rect width="1000" height="1414" fill="#fff"/>`);
+  const W = L.W, half = W / 2, maxName = Math.max(8, Math.floor((W - 80 - (half + 124)) / 9));
+  o.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${L.H}" width="${W}" height="${L.H}" font-family="Arial, Helvetica, sans-serif">`);
+  o.push(`<rect width="${W}" height="${L.H}" fill="#fff"/>`);
   L.markers.forEach(m => o.push(`<rect x="${m.x - 28}" y="${m.y - 28}" width="56" height="56" fill="#000"/>`));
-  o.push(`<text x="500" y="66" font-size="24" font-weight="700" text-anchor="middle" fill="#000">Hoja de respuestas</text>`);
-  // Recuadro de datos (Nombre / Fecha, Curso / Evaluación)
-  o.push(`<rect x="70" y="108" width="860" height="112" rx="14" fill="none" stroke="#000" stroke-width="2"/>`);
-  o.push(`<line x1="70" y1="164" x2="930" y2="164" stroke="#000" stroke-width="1.5"/>`);
-  o.push(`<line x1="660" y1="108" x2="660" y2="164" stroke="#000" stroke-width="1.5"/><line x1="500" y1="164" x2="500" y2="220" stroke="#000" stroke-width="1.5"/>`);
+  o.push(`<rect x="${L.orient.x - 13}" y="${L.orient.y - 13}" width="26" height="26" fill="#000"/>`);
+  o.push(`<text x="${half + 40}" y="66" font-size="24" font-weight="700" text-anchor="middle" fill="#000">Hoja de respuestas</text>`);
+  // Recuadro de datos (Nombre / Fecha, Aula / Evaluación)
+  o.push(`<rect x="70" y="108" width="${W - 140}" height="112" rx="14" fill="none" stroke="#000" stroke-width="3"/>`);
+  o.push(`<line x1="70" y1="164" x2="${W - 70}" y2="164" stroke="#000" stroke-width="1.5"/>`);
+  o.push(`<line x1="${W - 270}" y1="108" x2="${W - 270}" y2="164" stroke="#000" stroke-width="1.5"/><line x1="${half}" y1="164" x2="${half}" y2="220" stroke="#000" stroke-width="1.5"/>`);
   const lab = (x, y, w, t) => `<rect x="${x}" y="${y}" width="${w}" height="30" fill="#d9d9d9" stroke="#000" stroke-width="1"/><text x="${x + w / 2}" y="${y + 20}" font-size="14" text-anchor="middle" fill="#000">${t}</text>`;
-  o.push(lab(80, 121, 84, 'Nombre'), lab(670, 121, 70, 'Fecha'), lab(80, 177, 84, 'Aula'), lab(510, 177, 104, 'Evaluación'));
-  o.push(`<text x="624" y="198" font-size="17" fill="#000">${esc(ex.name).slice(0, 26)}</text>`);
+  o.push(lab(80, 121, 84, 'Nombre'), lab(W - 260, 121, 70, 'Fecha'), lab(80, 177, 84, 'Aula'), lab(half + 10, 177, 104, 'Evaluación'));
+  o.push(`<text x="${half + 124}" y="198" font-size="17" fill="#000">${esc(ex.name).slice(0, maxName)}</text>`);
   const bubble = (x, y, on) => on ? `<circle cx="${x}" cy="${y}" r="${r - 0.4}" fill="#222"/>` : `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="#6f6f6f" stroke-width="1.5"/>`;
   // Código del alumno
   if (L.idDigits > 0) {
@@ -715,10 +801,10 @@ function sheetSVG(ex, fill) {
   // Leyenda de cursos
   const secs = ex.sections.slice().sort((a, b) => a.from - b.from).map(s => `${s.from}–${s.to} ${s.name}`);
   const lines = []; let cur = '';
-  secs.forEach(t => { if ((cur + '    ' + t).length > 95) { lines.push(cur); cur = t; } else cur = cur ? cur + '    ' + t : t; });
+  secs.forEach(t => { if ((cur + '    ' + t).length > (L.W - 300) / 7) { lines.push(cur); cur = t; } else cur = cur ? cur + '    ' + t : t; });
   if (cur) lines.push(cur);
-  lines.slice(0, 2).forEach((t, j) => o.push(`<text x="112" y="${1346 + j * 17}" font-size="12" fill="#444">${esc(t)}</text>`));
-  if (!lines.length) o.push(`<text x="500" y="1360" font-size="12" text-anchor="middle" fill="#666">Rellena el círculo por completo con lápiz 2B. No dobles la hoja ni manches los cuadros negros.</text>`);
+  lines.slice(0, 2).forEach((t, j) => o.push(`<text x="112" y="${L.legendY + j * 16}" font-size="12" fill="#444">${esc(t)}</text>`));
+  if (!lines.length) o.push(`<text x="112" y="${L.legendY + 4}" font-size="12" fill="#666">Rellena el círculo por completo con lápiz 2B.</text>`);
   o.push('</svg>');
   return o.join('');
 }
@@ -728,17 +814,21 @@ function svgToImage(svg) {
 }
 
 /* ===== Lectura de imagen ===== */
+// Lee todas las cartillas que aparezcan en la imagen (una hoja puede traer varias)
 function readCanvas(cv, ex) {
   const w = cv.width, h = cv.height, ctx = cv.getContext('2d', { willReadFrequently: true });
   const id = ctx.getImageData(0, 0, w, h), g = OMR.grayFromRGBA(id.data, w, h), L = layoutOf(ex);
   let loc = null;
-  for (const t of [ex.sens, ex.sens * 0.65, ex.sens * 1.45]) { loc = OMR.locate(g, w, h, L, t); if (loc.ok) break; }
+  for (const t of [ex.sens, ex.sens * 0.65, ex.sens * 1.45]) { loc = OMR.locateAll(g, w, h, L, t); if (loc.ok) break; }
   if (!loc.ok) return { ok: false, err: loc.err };
-  const r = OMR.readMarks(loc, w, h, L, ex.thr, ex.autoThr !== false);
-  const rc = OMR.rectify(id.data, w, h, loc.map, 640);
-  const oc = document.createElement('canvas'); oc.width = rc.w; oc.height = rc.h;
-  oc.getContext('2d').putImageData(new ImageData(rc.data, rc.w, rc.h), 0, 0);
-  return { ok: true, answers: r.answers, id: r.id, doubts: r.doubts, idDoubt: r.idDoubt, img: oc.toDataURL('image/jpeg', 0.6) };
+  const sheets = loc.sheets.map(sh => {
+    const r = OMR.readMarks({ b: loc.b, map: sh.map }, w, h, L, ex.thr, ex.autoThr !== false);
+    const rc = OMR.rectify(id.data, w, h, sh.map, 640, L.H, L.W);
+    const oc = document.createElement('canvas'); oc.width = rc.w; oc.height = rc.h;
+    oc.getContext('2d').putImageData(new ImageData(rc.data, rc.w, rc.h), 0, 0);
+    return { ok: true, answers: r.answers, id: r.id, doubts: r.doubts, idDoubt: r.idDoubt, img: oc.toDataURL('image/jpeg', 0.6), center: sh.center };
+  });
+  return { ok: true, sheets };
 }
 async function fileToCanvas(file) {
   const url = URL.createObjectURL(file);
@@ -751,6 +841,12 @@ async function fileToCanvas(file) {
   } finally { URL.revokeObjectURL(url); }
 }
 
+function handleReadAll(R, ex, source) {
+  if (!R.ok) return handleRead(R, ex, source);
+  if (S.scanMode === 'clave') return handleRead(R.sheets[0], ex, source);
+  R.sheets.forEach((sh, i) => handleRead(sh, ex, R.sheets.length > 1 ? `${source} · cartilla ${i + 1} de ${R.sheets.length}` : source));
+  if (R.sheets.length > 1) toast(`${R.sheets.length} cartillas leídas en la imagen`);
+}
 function handleRead(r, ex, source) {
   if (!r.ok) { S.log.unshift({ t: source, e: r.err }); render(); return null; }
   if (S.scanMode === 'clave') {
@@ -763,9 +859,9 @@ function handleRead(r, ex, source) {
   }
   const code = r.id && !r.id.includes('?') ? r.id : '';
   let replaced = false;
-  if (code) for (const o of examResults(ex)) if (o.studentId === code) { delete S.results[o.id]; Store.del('res', o.id); replaced = true; }
+  if (code) for (const o of examResults(ex)) if (o.studentId === code && o.id !== S._batchKeep) { delete S.results[o.id]; Store.del('res', o.id); replaced = true; }
   const res = { id: uid(), examId: ex.id, studentId: code || r.id || '', name: (code && rosterMap(ex)[code]) || '', answers: r.answers, doubts: r.doubts || [], idDoubt: !!r.idDoubt || !code, img: r.img, created: Date.now() };
-  if (source === 'simulada') res.name = res.name || 'Alumno simulado ' + (res.studentId || '').slice(-3);
+  if (source.startsWith('simulada')) res.name = res.name || 'Alumno simulado ' + (res.studentId || '').slice(-3);
   S.results[res.id] = res; Store.put('res', res);
   const g = grade(ex, res.answers);
   S.last = res.id;
@@ -797,23 +893,28 @@ const Cam = {
   tick() {
     const v = $('#vid'), ov = $('#ov'), ex = curExam();
     if (!v || !ov || !ex || v.readyState < 2 || this.busy) return;
-    const vw = v.videoWidth, vh = v.videoHeight, s = 760 / Math.max(vw, vh);
+    const vw = v.videoWidth, vh = v.videoHeight, s = 900 / Math.max(vw, vh);
     const w = Math.round(vw * s), h = Math.round(vh * s), c = this.work; c.width = w; c.height = h;
     const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(v, 0, 0, w, h);
     const g = OMR.grayFromRGBA(ctx.getImageData(0, 0, w, h).data, w, h);
-    const loc = OMR.locate(g, w, h, layoutOf(ex), ex.sens);
+    const loc = OMR.locateAll(g, w, h, layoutOf(ex), ex.sens);
     ov.width = w; ov.height = h;
     const o = ov.getContext('2d'); o.clearRect(0, 0, w, h);
     const pill = $('#pill');
     if (!loc.ok) { this.stable = 0; this.prev = null; this.waitLost = false; if (pill) { pill.textContent = loc.err; pill.className = 'pill'; } return; }
-    const P = loc.corners;
-    o.strokeStyle = '#3DDC84'; o.lineWidth = 4; o.beginPath(); P.forEach((p, i) => i ? o.lineTo(p.x, p.y) : o.moveTo(p.x, p.y)); o.closePath(); o.stroke();
-    P.forEach(p => { o.fillStyle = '#F2BE2C'; o.beginPath(); o.arc(p.x, p.y, 7, 0, 7); o.fill(); });
-    const move = this.prev ? P.reduce((a, p, i) => a + Math.hypot(p.x - this.prev[i].x, p.y - this.prev[i].y), 0) / 4 / w : 1;
+    loc.sheets.forEach(sh => {
+      const P = sh.corners;
+      o.strokeStyle = '#3DDC84'; o.lineWidth = 4; o.beginPath(); P.forEach((p, i) => i ? o.lineTo(p.x, p.y) : o.moveTo(p.x, p.y)); o.closePath(); o.stroke();
+      P.forEach(p => { o.fillStyle = '#F2BE2C'; o.beginPath(); o.arc(p.x, p.y, 6, 0, 7); o.fill(); });
+    });
+    const P = loc.sheets.flatMap(sh => sh.corners);
+    const same = this.prev && this.prev.length === P.length;
+    const move = same ? P.reduce((a, p, i) => a + Math.hypot(p.x - this.prev[i].x, p.y - this.prev[i].y), 0) / P.length / w : 1;
     this.prev = P.map(p => ({ x: p.x, y: p.y }));
     this.stable = move < 0.012 ? this.stable + 1 : 0;
+    const n = loc.sheets.length, txt = n > 1 ? `${n} cartillas detectadas` : 'Cartilla detectada';
     if (this.waitLost) { if (pill) { pill.textContent = 'Leída. Pon la siguiente hoja.'; pill.className = 'pill ok'; } return; }
-    if (pill) { pill.textContent = this.stable ? 'Hoja detectada, quieto…' : 'Hoja detectada'; pill.className = 'pill ok'; }
+    if (pill) { pill.textContent = this.stable ? txt + ', quieto…' : txt; pill.className = 'pill ok'; }
     if (this.auto && this.stable >= 2) this.capture();
   },
   grab(max) {
@@ -825,53 +926,93 @@ const Cam = {
   async capture() {
     const v = $('#vid'), ex = curExam(); if (!v || !ex || v.readyState < 2 || this.busy) return;
     this.busy = true;
-    // Lee 3 cuadros seguidos y vota: solo se acepta lo que coincide
-    const reads = [];
+    // Lee 3 cuadros seguidos y vota cartilla por cartilla: solo se acepta lo que coincide
+    const frames = [];
     for (let i = 0; i < 3; i++) {
-      const r = readCanvas(this.grab(1920), ex);
-      if (r.ok) reads.push(r);
+      const R = readCanvas(this.grab(2200), ex);
+      if (R.ok) frames.push(R.sheets);
       await new Promise(res => setTimeout(res, 140));
     }
     this.busy = false;
-    if (!reads.length) { handleRead({ ok: false, err: 'La hoja se movió al leer. Mantén quieta la cámara.' }, ex, 'cámara'); return; }
+    if (!frames.length) { handleRead({ ok: false, err: 'La hoja se movió al leer. Mantén quieta la cámara.' }, ex, 'cámara'); return; }
+    const base = frames.reduce((a, f) => f.length > a.length ? f : a, frames[0]);
     const vote = arr => { const c = {}; arr.forEach(a => c[a] = (c[a] || 0) + 1); return Object.entries(c).sort((a, b) => b[1] - a[1])[0]; };
-    const base = reads[0], doubts = new Set();
-    const answers = base.answers.map((_, i) => {
-      const [a, n] = vote(reads.map(r => r.answers[i]));
-      if (n < reads.length || reads.some(r => r.doubts.includes(i))) doubts.add(i);
-      return a;
+    const sheets = base.map(sh => {
+      // la misma cartilla en cada cuadro = la de centro más cercano
+      const reads = frames.map(f => f.reduce((best, x) => !best || Math.hypot(x.center.x - sh.center.x, x.center.y - sh.center.y) < Math.hypot(best.center.x - sh.center.x, best.center.y - sh.center.y) ? x : best, null))
+        .filter(x => x && Math.hypot(x.center.x - sh.center.x, x.center.y - sh.center.y) < 60);
+      const doubts = new Set();
+      const answers = sh.answers.map((_, i) => {
+        const [a, n] = vote(reads.map(r => r.answers[i]));
+        if (n < reads.length || reads.length < 2 || reads.some(r => r.doubts.includes(i))) doubts.add(i);
+        return a;
+      });
+      const [id, nid] = vote(reads.map(r => r.id));
+      return { ok: true, answers, id, doubts: [...doubts].sort((a, b) => a - b), idDoubt: nid < reads.length || reads.some(x => x.idDoubt), img: sh.img };
     });
-    const [id, nid] = vote(reads.map(r => r.id));
-    const r = { ok: true, answers, id, doubts: [...doubts].sort((a, b) => a - b), idDoubt: nid < reads.length || reads.some(x => x.idDoubt), img: base.img };
     this.waitLost = true; this.stable = 0; if (navigator.vibrate) navigator.vibrate(60);
-    handleRead(r, ex, 'cámara');
+    handleReadAll({ ok: true, sheets }, ex, 'cámara');
   }
 };
 
 async function processFiles(files) {
   const ex = curExam();
   for (const f of files) {
-    try { const cv = await fileToCanvas(f); handleRead(readCanvas(cv, ex), ex, f.name || 'foto'); }
+    try { const cv = await fileToCanvas(f); handleReadAll(readCanvas(cv, ex), ex, f.name || 'foto'); }
     catch (e) { S.log.unshift({ t: f.name || 'foto', e: 'No se pudo abrir la imagen.' }); render(); }
   }
 }
 async function simulate() {
-  const ex = curExam();
-  const answers = Array.from({ length: ex.nQ }, (_, i) => {
-    const k = ex.key[i], r = Math.random();
-    if (r < 0.07) return '';
-    if (k && k !== '*' && r < 0.7) return k;
-    return LET[Math.floor(Math.random() * 5)];
-  });
-  const id = Array.from({ length: ex.idDigits }, () => Math.floor(Math.random() * 10)).join('');
-  const im = await svgToImage(sheetSVG(ex, { answers, id }));
-  const c = document.createElement('canvas'); c.width = 1100; c.height = 1450;
+  const ex = curExam(), n = ex.perPage || 1;
+  const fills = Array.from({ length: n }, () => ({
+    answers: Array.from({ length: ex.nQ }, (_, i) => {
+      const k = ex.key[i], r = Math.random();
+      if (r < 0.07) return '';
+      if (k && k !== '*' && r < 0.7) return k;
+      return LET[Math.floor(Math.random() * 5)];
+    }),
+    id: Array.from({ length: ex.idDigits }, () => Math.floor(Math.random() * 10)).join('')
+  }));
+  const im = await svgToImage(pageSVG(ex, n, fills));
+  // "foto" de la hoja: algo girada, sobre una mesa, con luz desigual
+  const c = document.createElement('canvas'); c.width = 1700; c.height = 2200;
   const ctx = c.getContext('2d'); ctx.fillStyle = '#6b6259'; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.save(); ctx.translate(550, 725); ctx.rotate((Math.random() - .5) * 0.12);
-  const sc = 0.9; ctx.drawImage(im, -500 * sc, -707 * sc, 1000 * sc, 1414 * sc); ctx.restore();
-  const gr = ctx.createLinearGradient(0, 0, c.width, c.height); gr.addColorStop(0, 'rgba(255,240,210,0.10)'); gr.addColorStop(1, 'rgba(0,0,0,0.28)');
+  ctx.save(); ctx.translate(850, 1100); ctx.rotate((Math.random() - .5) * 0.1);
+  const sc = 0.93; ctx.drawImage(im, -800 * sc, -1131 * sc, 1600 * sc, 2262 * sc); ctx.restore();
+  const gr = ctx.createLinearGradient(0, 0, c.width, c.height); gr.addColorStop(0, 'rgba(255,240,210,0.10)'); gr.addColorStop(1, 'rgba(0,0,0,0.25)');
   ctx.fillStyle = gr; ctx.fillRect(0, 0, c.width, c.height);
-  handleRead(readCanvas(c, ex), ex, 'simulada');
+  handleReadAll(readCanvas(c, ex), ex, 'simulada');
+}
+
+/* ===== Página A4 con varias cartillas ===== */
+function pageGrid(ex, n) {
+  const L = layoutOf(ex), PW = 200, PH = 287, G = 6;
+  let best = null;
+  for (let c = 1; c <= n; c++) {
+    const r = Math.ceil(n / c);
+    const tw = (PW - (c - 1) * G) / c, th = (PH - (r - 1) * G) / r;
+    const scale = Math.min(tw / L.W, th / L.H);
+    if (!best || scale > best.scale) best = { c, r, scale };
+  }
+  const tw = L.W * best.scale, th = L.H * best.scale;
+  const gw = best.c * tw + (best.c - 1) * G, gh = best.r * th + (best.r - 1) * G;
+  best.x0 = 5 + (PW - gw) / 2; best.y0 = 5 + (PH - gh) / 2; best.tw = tw; best.th = th; best.G = G;
+  best.bubbleMM = 2 * L.r * best.scale; // diámetro impreso del círculo en mm
+  return best;
+}
+function pageSVG(ex, n, fills) {
+  const P = pageGrid(ex, n), inner = [];
+  for (let i = 0; i < n; i++) {
+    const c = i % P.c, r = Math.floor(i / P.c);
+    const x = P.x0 + c * (P.tw + P.G), y = P.y0 + r * (P.th + P.G);
+    const L = layoutOf(ex);
+    const svg = sheetSVG(ex, fills && fills[i]).replace(` width="${L.W}" height="${L.H}"`, '').replace('<svg ', `<svg x="${x}" y="${y}" width="${P.tw}" height="${P.th}" `);
+    inner.push(svg);
+  }
+  const cuts = [];
+  for (let c = 1; c < P.c; c++) { const x = P.x0 + c * (P.tw + P.G) - P.G / 2; cuts.push(`<line x1="${x}" y1="2" x2="${x}" y2="295" stroke="#bbb" stroke-width="0.25" stroke-dasharray="2 2"/>`); }
+  for (let r = 1; r < P.r; r++) { const y = P.y0 + r * (P.th + P.G) - P.G / 2; cuts.push(`<line x1="2" y1="${y}" x2="208" y2="${y}" stroke="#bbb" stroke-width="0.25" stroke-dasharray="2 2"/>`); }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" width="1600" height="2262"><rect width="210" height="297" fill="#fff"/>${cuts.join('')}${inner.join('')}</svg>`;
 }
 
 /* ===== Render ===== */
@@ -1045,10 +1186,16 @@ function configView(ex) {
 }
 
 function sheetView(ex) {
-  return `<div class="panel"><div class="row" style="justify-content:space-between">
-      <div><h3>Hoja de respuestas</h3><p class="muted small" style="margin:4px 0 0">${ex.nQ} preguntas en bloques de 10, código de ${ex.idDigits} dígitos, tamaño A4. Imprime a escala 100% y en buena calidad: los 4 cuadros de las esquinas y los ■ de cada bloque son los que usa el lector para ubicarse.</p></div>
-      <div class="row"><button class="btn primary" data-act="print">Imprimir</button><button class="btn" data-act="png">Descargar PNG</button><button class="btn" data-act="htmlsheet">Descargar para imprimir</button></div></div></div>
-    <div class="sheet-frame">${sheetSVG(ex)}</div>`;
+  const n = ex.perPage || 1, P = pageGrid(ex, n), L = layoutOf(ex);
+  const small = P.bubbleMM < 2.6;
+  return `<div class="panel"><div class="row" style="justify-content:space-between;align-items:flex-end">
+      <div><h3>Hoja de respuestas</h3><p class="muted small" style="margin:4px 0 0">${ex.nQ} preguntas, código de ${ex.idDigits} dígitos. La cartilla mide lo que su contenido necesita, así caben varias por hoja A4.</p></div>
+      <label class="f" style="min-width:170px">Cartillas por hoja A4<select id="perPage">${[1, 2, 3, 4, 6, 8, 9].map(k => `<option value="${k}" ${k === n ? 'selected' : ''}>${k}</option>`).join('')}</select></label></div>
+    <p class="small" style="margin:10px 0 0">Distribución ${P.c} × ${P.r} · cada cartilla de ${Math.round(P.tw)} × ${Math.round(P.th)} mm · círculos de <b>${P.bubbleMM.toFixed(1)} mm</b></p>
+    ${small ? `<div class="note bad small">Los círculos quedan muy pequeños para rellenar con lápiz (menos de 2.6 mm). Usa menos cartillas por hoja o menos preguntas.</div>` : ''}
+    <div class="row" style="margin-top:12px"><button class="btn primary" data-act="print">Imprimir</button><button class="btn" data-act="png">Descargar PNG</button><button class="btn" data-act="htmlsheet">Descargar para imprimir</button></div>
+    <p class="muted small" style="margin-bottom:0">Imprime a escala 100%. Puedes recortar por la línea punteada o escanear la hoja entera: el lector encuentra todas las cartillas de la foto y las califica por separado.</p></div>
+    <div class="sheet-frame">${pageSVG(ex, n).replace('width="1600" height="2262"', '')}</div>`;
 }
 
 function scanView(ex) {
@@ -1081,7 +1228,7 @@ function scanView(ex) {
           ${Cam.stream ? `<button class="btn primary" data-act="capture">Capturar ahora</button><button class="btn" data-act="camoff">Detener cámara</button>` : ''}
           <label class="btn">Tomar foto<input type="file" accept="image/*" capture="environment" id="camFile" class="hidden"></label>
           <label class="btn">Subir imágenes<input type="file" accept="image/*" multiple id="galFile" class="hidden"></label>
-          <button class="btn ghost" data-act="sim">Probar con una hoja simulada</button>
+          <button class="btn ghost" data-act="sim">Probar con una hoja simulada${(ex.perPage || 1) > 1 ? ` (${ex.perPage} cartillas)` : ''}</button>
         </div>
       </div>
       <div>${lastHtml}
@@ -1197,7 +1344,7 @@ function itemPanel(t, n) {
 
 /* ===== Detalle de una hoja (como la revisión de ZipGrade) ===== */
 function overlaySVG(ex, g, res) {
-  const L = layoutOf(ex), R = L.r + 3.5, o = [`<svg viewBox="0 0 1000 1414" aria-hidden="true">`];
+  const L = layoutOf(ex), R = L.r + 3.5, o = [`<svg viewBox="0 0 ${L.W} ${L.H}" aria-hidden="true">`];
   const doubts = new Set(res.doubts || []);
   L.q.forEach((q, i) => {
     const p = g.per[i]; if (!p) return;
@@ -1292,17 +1439,17 @@ document.addEventListener('click', async e => {
         delete S.exams[ex.id]; Store.del('exam', ex.id); S.cur = null; render();
       } break;
     case 'print': {
-      $('#printArea').innerHTML = sheetSVG(ex);
+      $('#printArea').innerHTML = pageSVG(ex, ex.perPage || 1).replace('width="1600" height="2262"', '');
       try { window.print(); } catch (err) { toast('La impresión directa no está disponible aquí. Usa "Descargar para imprimir".'); }
       break;
     }
     case 'png': {
-      const im = await svgToImage(sheetSVG(ex)); const c = document.createElement('canvas'); c.width = 2480; c.height = 3508;
+      const im = await svgToImage(pageSVG(ex, ex.perPage || 1)); const c = document.createElement('canvas'); c.width = 2480; c.height = 3508;
       const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(im, 0, 0, c.width, c.height);
       c.toBlob(b => saveFile(`hoja-${slug(ex.name)}.png`, b), 'image/png'); break;
     }
     case 'htmlsheet': {
-      const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Hoja de respuestas - ${esc(ex.name)}</title><style>@page{size:A4;margin:0}html,body{margin:0}svg{width:210mm;height:297mm;display:block}</style></head><body>${sheetSVG(ex)}<script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></body></html>`;
+      const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Hoja de respuestas - ${esc(ex.name)}</title><style>@page{size:A4;margin:0}html,body{margin:0}svg{width:210mm;height:297mm;display:block}</style></head><body>${pageSVG(ex, ex.perPage || 1).replace('width="1600" height="2262"', '')}<script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></body></html>`;
       saveFile(`hoja-${slug(ex.name)}.html`, html); break;
     }
     case 'mode': S.scanMode = el.dataset.m; render(); break;
@@ -1341,6 +1488,7 @@ document.addEventListener('change', async e => {
   const t = e.target, ex = curExam();
   if (t.id === 'autoCap') { Cam.auto = t.checked; return; }
   if (t.id === 'sortSel') { const k = t.value; S.sort = { k, d: (k === 'name' || k === 'id') ? 1 : -1 }; render(); return; }
+  if (t.id === 'perPage') { ex.perPage = +t.value; Store.put('exam', ex); render(); return; }
   if (t.id === 'autoThr') { ex.autoThr = t.checked; Store.put('exam', ex); render(); return; }
   if (t.id === 'camFile' || t.id === 'galFile') { const f = [...t.files]; t.value = ''; await processFiles(f); return; }
   if (t.id === 'impFile') {
