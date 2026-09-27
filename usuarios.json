@@ -1,0 +1,28 @@
+{
+  "app": "lector-cartillas",
+  "updated": 1790535307557,
+  "users": [
+    {
+      "u": "administrador",
+      "name": "Administrador",
+      "role": "admin",
+      "salt": "1nENCIMNs0/4E42CCX7LQQ==",
+      "hash": "f80mfr//Wri2pj0TjGfmvazOlqApo1cc9Oa/pL4HyT0=",
+      "active": true,
+      "mustChange": false,
+      "created": 1790528018222,
+      "pwAt": 1790528052606
+    },
+    {
+      "u": "andrea",
+      "name": "Andrea",
+      "role": "admin",
+      "salt": "JxI367b5xL+2MMmlT1qJGQ==",
+      "hash": "nUX6E6Nfo1/WTkzMui1fTl8BT9xJwdO1x6c75SxAVpk=",
+      "active": true,
+      "mustChange": true,
+      "created": 1790535307557,
+      "pwAt": 1790535307557
+    }
+  ]
+}
