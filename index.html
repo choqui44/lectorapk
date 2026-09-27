@@ -632,6 +632,576 @@ const OMR = (() => {
 
   return { W, H, OPTS, ID_ORDER, buildLayout, grayFromRGBA, binarize, locate, locateAll, readMarks, decide, rectify, homography };
 })();
+/* ===== Generador de Excel (.xlsx) sin librerías: estilos, fórmulas, tablas y gráficos nativos ===== */
+const XL = (() => {
+  const enc = new TextEncoder();
+  const xe = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  const colL = n => { let s = ''; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const ref = (r, c) => colL(c) + (r + 1);
+  const absRef = (r, c) => '$' + colL(c) + '$' + (r + 1);
+
+  /* ---------- ZIP (sin compresión) ---------- */
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = d => { let c = 0xFFFFFFFF; for (let i = 0; i < d.length; i++) c = CRC[(c ^ d[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  function zip(files) {
+    const parts = [], central = []; let off = 0;
+    for (const [name, content] of files) {
+      const nb = enc.encode(name), data = typeof content === 'string' ? enc.encode(content) : content, crc = crc32(data);
+      const h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+      h.setUint16(10, 0, true); h.setUint16(12, 0x21, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+      h.setUint16(26, nb.length, true); h.setUint16(28, 0, true);
+      parts.push(new Uint8Array(h.buffer), nb, data);
+      const c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+      c.setUint16(12, 0, true); c.setUint16(14, 0x21, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+      c.setUint16(28, nb.length, true); c.setUint32(42, off, true);
+      central.push(new Uint8Array(c.buffer), nb);
+      off += 30 + nb.length + data.length;
+    }
+    const csize = central.reduce((a, b) => a + b.length, 0);
+    const e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+    const all = [...parts, ...central, new Uint8Array(e.buffer)];
+    const out = new Uint8Array(all.reduce((a, b) => a + b.length, 0)); let p = 0;
+    for (const a of all) { out.set(a, p); p += a.length; }
+    return out;
+  }
+
+  /* ---------- Estilos ---------- */
+  function Styles() {
+    this.fonts = ['<font><sz val="10"/><name val="Arial"/><family val="2"/></font>'];
+    this.fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'];
+    this.borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
+    this.numFmts = []; this.xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>']; this.dxfs = [];
+    this.map = new Map();
+  }
+  Styles.prototype.idx = function (arr, xml) { let i = arr.indexOf(xml); if (i < 0) { arr.push(xml); i = arr.length - 1; } return i; };
+  Styles.prototype.get = function (st) {
+    if (!st) return 0;
+    const key = JSON.stringify(st); if (this.map.has(key)) return this.map.get(key);
+    const f = st.font || {};
+    const fontXml = `<font>${f.b ? '<b/>' : ''}${f.i ? '<i/>' : ''}${f.u ? '<u/>' : ''}<sz val="${f.sz || 10}"/><color rgb="FF${f.color || '1F2328'}"/><name val="${f.name || 'Arial'}"/><family val="2"/></font>`;
+    const fontId = this.idx(this.fonts, fontXml);
+    const fillId = st.fill ? this.idx(this.fills, `<fill><patternFill patternType="solid"><fgColor rgb="FF${st.fill}"/><bgColor indexed="64"/></patternFill></fill>`) : 0;
+    let borderId = 0;
+    if (st.border) {
+      const b = st.border, side = (k) => { const v = b[k] || b.all; if (!v) return `<${k}/>`; const [style, color] = v.split(':'); return `<${k} style="${style}"><color rgb="FF${color || 'D3D9D6'}"/></${k}>`; };
+      borderId = this.idx(this.borders, `<border>${side('left')}${side('right')}${side('top')}${side('bottom')}<diagonal/></border>`);
+    }
+    let numFmtId = 0;
+    if (st.num) {
+      const builtin = { '0': 1, '0.00': 2, '0%': 9, '0.00%': 10 };
+      if (builtin[st.num] !== undefined) numFmtId = builtin[st.num];
+      else { let i = this.numFmts.indexOf(st.num); if (i < 0) { this.numFmts.push(st.num); i = this.numFmts.length - 1; } numFmtId = 164 + i; }
+    }
+    const a = st.align || {};
+    const al = (a.h || a.v || a.wrap || a.indent) ? `<alignment${a.h ? ` horizontal="${a.h}"` : ''}${a.v ? ` vertical="${a.v}"` : ''}${a.wrap ? ' wrapText="1"' : ''}${a.indent ? ` indent="${a.indent}"` : ''}/>` : '';
+    const xf = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${numFmtId ? ' applyNumberFormat="1"' : ''} applyFont="1"${fillId ? ' applyFill="1"' : ''}${borderId ? ' applyBorder="1"' : ''}${al ? ' applyAlignment="1">' + al + '</xf>' : '/>'}`;
+    const id = this.idx(this.xfs, xf);
+    this.map.set(key, id); return id;
+  };
+  Styles.prototype.dxf = function (fontColor, fill, bold) {
+    this.dxfs.push(`<dxf><font>${bold ? '<b/>' : ''}<color rgb="FF${fontColor}"/></font>${fill ? `<fill><patternFill patternType="solid"><fgColor rgb="FF${fill}"/><bgColor rgb="FF${fill}"/></patternFill></fill>` : ''}</dxf>`);
+    return this.dxfs.length - 1;
+  };
+  Styles.prototype.xml = function () {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+${this.numFmts.length ? `<numFmts count="${this.numFmts.length}">${this.numFmts.map((f, i) => `<numFmt numFmtId="${164 + i}" formatCode="${xe(f)}"/>`).join('')}</numFmts>` : ''}
+<fonts count="${this.fonts.length}">${this.fonts.join('')}</fonts>
+<fills count="${this.fills.length}">${this.fills.join('')}</fills>
+<borders count="${this.borders.length}">${this.borders.join('')}</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+<dxfs count="${this.dxfs.length}">${this.dxfs.join('')}</dxfs>
+<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>
+</styleSheet>`;
+  };
+
+  /* ---------- Hoja ---------- */
+  function Sheet(book, name) {
+    Object.assign(this, { book, name, cells: new Map(), merges: [], cols: {}, rows: {}, cf: [], dv: [], charts: [], tables: [], freeze: null, tab: null, zoom: 100 });
+  }
+  // v: número | texto | null; opts: {s: estilo, f: fórmula}
+  Sheet.prototype.set = function (r, c, v, st, f) { this.cells.set(r * 1000 + c, { r, c, v, s: this.book.styles.get(st), f }); return this; };
+  Sheet.prototype.style = function (r1, c1, r2, c2, st) { for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) { const k = r * 1000 + c, cur = this.cells.get(k); if (cur) cur.s = this.book.styles.get(st); else this.set(r, c, null, st); } };
+  Sheet.prototype.merge = function (r1, c1, r2, c2, v, st, f) { this.style(r1, c1, r2, c2, st); this.set(r1, c1, v, st, f); this.merges.push(`${ref(r1, c1)}:${ref(r2, c2)}`); };
+  Sheet.prototype.width = function (c, w) { this.cols[c] = w; };
+  Sheet.prototype.height = function (r, h) { this.rows[r] = h; };
+  Sheet.prototype.xml = function () {
+    const rows = new Map();
+    for (const cell of this.cells.values()) { if (!rows.has(cell.r)) rows.set(cell.r, []); rows.get(cell.r).push(cell); }
+    Object.keys(this.rows).forEach(r => { if (!rows.has(+r)) rows.set(+r, []); });
+    const rowNums = [...rows.keys()].sort((a, b) => a - b);
+    const cellXml = cell => {
+      const a = `r="${ref(cell.r, cell.c)}"${cell.s ? ` s="${cell.s}"` : ''}`;
+      if (cell.f) {
+        const isNum = typeof cell.v === 'number' && isFinite(cell.v);
+        const v = cell.v === null || cell.v === undefined ? '' : (isNum ? `<v>${cell.v}</v>` : `<v>${xe(cell.v)}</v>`);
+        return `<c ${a}${isNum || cell.v === null || cell.v === undefined ? '' : ' t="str"'}><f>${xe(cell.f)}</f>${v}</c>`;
+      }
+      if (cell.v === null || cell.v === undefined || cell.v === '') return `<c ${a}/>`;
+      if (typeof cell.v === 'number') return isFinite(cell.v) ? `<c ${a}><v>${cell.v}</v></c>` : `<c ${a}/>`;
+      return `<c ${a} t="inlineStr"><is><t xml:space="preserve">${xe(cell.v)}</t></is></c>`;
+    };
+    const sheetData = rowNums.map(r => {
+      const cs = (rows.get(r) || []).sort((a, b) => a.c - b.c);
+      const h = this.rows[r];
+      return `<row r="${r + 1}"${h ? ` ht="${h}" customHeight="1"` : ''}>${cs.map(cellXml).join('')}</row>`;
+    }).join('');
+    const cols = Object.keys(this.cols).map(Number).sort((a, b) => a - b).map(c => `<col min="${c + 1}" max="${c + 1}" width="${this.cols[c]}" customWidth="1"/>`).join('');
+    const ap = this.freeze ? (this.freeze.c && this.freeze.r ? 'bottomRight' : this.freeze.r ? 'bottomLeft' : 'topRight') : '';
+    const pane = this.freeze ? `<pane${this.freeze.c ? ` xSplit="${this.freeze.c}"` : ''}${this.freeze.r ? ` ySplit="${this.freeze.r}"` : ''} topLeftCell="${ref(this.freeze.r || 0, this.freeze.c || 0)}" activePane="${ap}" state="frozen"/><selection pane="${ap}"/>` : '';
+    let prio = 1;
+    const cf = this.cf.map(x => `<conditionalFormatting sqref="${x.sqref}">${x.rules.map(rule => rule.replace('PRIO', prio++)).join('')}</conditionalFormatting>`).join('');
+    const dv = this.dv.length ? `<dataValidations count="${this.dv.length}">${this.dv.map(d => `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="0" sqref="${d.sqref}"${d.prompt ? ` promptTitle="${xe(d.promptTitle || '')}" prompt="${xe(d.prompt)}"` : ''}><formula1>${xe(d.formula)}</formula1></dataValidation>`).join('')}</dataValidations>` : '';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetPr>${this.tab ? `<tabColor rgb="FF${this.tab}"/>` : ''}<pageSetUpPr fitToPage="1"/></sheetPr>
+<sheetViews><sheetView workbookViewId="0" showGridLines="0"${this.zoom !== 100 ? ` zoomScale="${this.zoom}"` : ''}${this.book.sheets[0] === this ? ' tabSelected="1"' : ''}>${pane}</sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+${cols ? `<cols>${cols}</cols>` : ''}
+<sheetData>${sheetData}</sheetData>
+${this.merges.length ? `<mergeCells count="${this.merges.length}">${this.merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : ''}
+${cf}${dv}
+<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>
+<pageSetup paperSize="9" orientation="${this.landscape ? 'landscape' : 'portrait'}" fitToWidth="1" fitToHeight="0"/>
+${this.charts.length ? '<drawing r:id="rIdD1"/>' : ''}
+${this.tables.length ? `<tableParts count="${this.tables.length}">${this.tables.map((t, i) => `<tablePart r:id="rIdT${i + 1}"/>`).join('')}</tableParts>` : ''}
+</worksheet>`;
+  };
+  // Formato condicional
+  Sheet.prototype.dataBar = function (sqref, color, min = 0, max = 1) { this.cf.push({ sqref, rules: [`<cfRule type="dataBar" priority="PRIO"><dataBar><cfvo type="num" val="${min}"/><cfvo type="num" val="${max}"/><color rgb="FF${color}"/></dataBar></cfRule>`] }); };
+  Sheet.prototype.colorScale = function (sqref, pts) { this.cf.push({ sqref, rules: [`<cfRule type="colorScale" priority="PRIO"><colorScale>${pts.map(p => `<cfvo type="num" val="${p[0]}"/>`).join('')}${pts.map(p => `<color rgb="FF${p[1]}"/>`).join('')}</colorScale></cfRule>`] }); };
+  Sheet.prototype.exprRule = function (sqref, formula, dxfId) { this.cf.push({ sqref, rules: [`<cfRule type="expression" dxfId="${dxfId}" priority="PRIO"><formula>${xe(formula)}</formula></cfRule>`] }); };
+
+  /* ---------- Gráficos ---------- */
+  const sheetRef = (sh, r1, c1, r2, c2) => `'${sh.name.replace(/'/g, "''")}'!${absRef(r1, c1)}:${absRef(r2, c2)}`;
+  function chartXml(ch) {
+    const txPr = (sz, color, b) => `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="${sz}" b="${b ? 1 : 0}"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:latin typeface="Arial"/></a:defRPr></a:pPr><a:endParaRPr lang="es-PE"/></a:p></c:txPr>`;
+    const title = ch.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1200" b="1"><a:solidFill><a:srgbClr val="23272B"/></a:solidFill><a:latin typeface="Arial"/></a:defRPr></a:pPr><a:r><a:rPr lang="es-PE" sz="1200" b="1"><a:solidFill><a:srgbClr val="23272B"/></a:solidFill><a:latin typeface="Arial"/></a:rPr><a:t>${xe(ch.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>';
+    const strCache = arr => `<c:strCache><c:ptCount val="${arr.length}"/>${arr.map((v, i) => `<c:pt idx="${i}"><c:v>${xe(v)}</c:v></c:pt>`).join('')}</c:strCache>`;
+    const numCache = (arr, fmt) => `<c:numCache><c:formatCode>${xe(fmt || 'General')}</c:formatCode><c:ptCount val="${arr.length}"/>${arr.map((v, i) => `<c:pt idx="${i}"><c:v>${+v || 0}</c:v></c:pt>`).join('')}</c:numCache>`;
+    const sp = color => `<c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr>`;
+    const series = ch.series.map((s, i) => `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>
+      <c:tx>${s.nameRef ? `<c:strRef><c:f>${xe(s.nameRef)}</c:f>${strCache([s.name])}</c:strRef>` : `<c:v>${xe(s.name)}</c:v>`}</c:tx>
+      ${sp(s.color || '2F6FDE')}${ch.type === 'bar' ? '<c:invertIfNegative val="0"/>' : ''}
+      ${(s.pointColors || []).map((pc, j) => `<c:dPt><c:idx val="${j}"/>${ch.type === 'bar' ? '<c:invertIfNegative val="0"/><c:bubble3D val="0"/>' : '<c:bubble3D val="0"/>'}${sp(pc)}</c:dPt>`).join('')}
+      <c:dLbls><c:numFmt formatCode="${xe(ch.labelFmt || 'General')}" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>${txPr(1000, ch.labelColor || '23272B', true)}${ch.type === 'bar' ? `<c:dLblPos val="${ch.stacked ? 'ctr' : 'outEnd'}"/>` : ''}<c:showLegendKey val="0"/><c:showVal val="${ch.showVal === false ? 0 : 1}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="${ch.type === 'doughnut' ? 1 : 0}"/><c:showBubbleSize val="0"/>${ch.type === 'doughnut' ? '<c:showLeaderLines val="0"/>' : ''}</c:dLbls>
+      <c:cat><c:strRef><c:f>${xe(ch.catRef)}</c:f>${strCache(ch.cats)}</c:strRef></c:cat>
+      <c:val><c:numRef><c:f>${xe(s.ref)}</c:f>${numCache(s.values, ch.numFmt)}</c:numRef></c:val></c:ser>`).join('');
+    let plot;
+    if (ch.type === 'doughnut') {
+      plot = `<c:doughnutChart><c:varyColors val="1"/>${series}<c:firstSliceAng val="0"/><c:holeSize val="58"/></c:doughnutChart>`;
+    } else {
+      const axStyle = `<c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="D3D9D6"/></a:solidFill></a:ln></c:spPr>`;
+      plot = `<c:barChart><c:barDir val="${ch.dir || 'col'}"/><c:grouping val="${ch.stacked ? 'stacked' : 'clustered'}"/><c:varyColors val="0"/>${series}
+        <c:gapWidth val="${ch.gap || 60}"/>${ch.stacked ? '<c:overlap val="100"/>' : ''}<c:axId val="111"/><c:axId val="222"/></c:barChart>
+        <c:catAx><c:axId val="111"/><c:scaling><c:orientation val="${ch.dir === 'bar' ? 'maxMin' : 'minMax'}"/></c:scaling><c:delete val="0"/><c:axPos val="${ch.dir === 'bar' ? 'l' : 'b'}"/><c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${axStyle}${txPr(1000, '444B52', false)}<c:crossAx val="222"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>
+        <c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/>${ch.max !== undefined ? `<c:max val="${ch.max}"/>` : ''}<c:min val="0"/></c:scaling><c:delete val="${ch.hideVal ? 1 : 0}"/><c:axPos val="${ch.dir === 'bar' ? 't' : 'l'}"/><c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="EAEDEB"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="${xe(ch.numFmt || 'General')}" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr>${txPr(900, '6B737B', false)}<c:crossAx val="111"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>`;
+    }
+    const legend = ch.legend ? `<c:legend><c:legendPos val="${ch.legend}"/><c:overlay val="0"/>${txPr(1000, '444B52', false)}</c:legend>` : '';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<c:lang val="es-PE"/><c:roundedCorners val="0"/>
+<c:chart>${title}<c:plotArea><c:layout/>${plot}<c:spPr><a:noFill/></c:spPr></c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>
+<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="DDE2DF"/></a:solidFill></a:ln></c:spPr>
+<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr><a:latin typeface="Arial"/></a:defRPr></a:pPr><a:endParaRPr lang="es-PE"/></a:p></c:txPr>
+</c:chartSpace>`;
+  }
+  Sheet.prototype.chart = function (spec, r1, c1, r2, c2) { this.charts.push({ spec, r1, c1, r2, c2 }); };
+  Sheet.prototype.table = function (spec) { this.tables.push(spec); };
+
+  /* ---------- Libro ---------- */
+  function Book() { this.sheets = []; this.styles = new Styles(); }
+  Book.prototype.sheet = function (name) { const s = new Sheet(this, name); this.sheets.push(s); return s; };
+  Book.prototype.build = function (meta) {
+    const files = [];
+    let chartN = 0, drawN = 0, tableN = 0;
+    const ctOver = [];
+    this.sheets.forEach((sh, i) => {
+      const n = i + 1, rels = [];
+      if (sh.charts.length) {
+        drawN++; const d = drawN;
+        rels.push(`<Relationship Id="rIdD1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${d}.xml"/>`);
+        const drels = [], anchors = [];
+        sh.charts.forEach((ch, j) => {
+          chartN++;
+          files.push([`xl/charts/chart${chartN}.xml`, chartXml(ch.spec)]);
+          ctOver.push(`<Override PartName="/xl/charts/chart${chartN}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`);
+          drels.push(`<Relationship Id="rIdC${j + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${chartN}.xml"/>`);
+          anchors.push(`<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${ch.c1}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${ch.r1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${ch.c2}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${ch.r2}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${j + 2}" name="Gráfico ${j + 1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rIdC${j + 1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`);
+        });
+        files.push([`xl/drawings/drawing${d}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${anchors.join('')}</xdr:wsDr>`]);
+        files.push([`xl/drawings/_rels/drawing${d}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${drels.join('')}</Relationships>`]);
+        ctOver.push(`<Override PartName="/xl/drawings/drawing${d}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`);
+      }
+      sh.tables.forEach((t, j) => {
+        tableN++;
+        rels.push(`<Relationship Id="rIdT${j + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table${tableN}.xml"/>`);
+        const rng = `${ref(t.r1, t.c1)}:${ref(t.r2, t.c2)}`;
+        files.push([`xl/tables/table${tableN}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${tableN}" name="${t.name}" displayName="${t.name}" ref="${rng}" totalsRowShown="0"><autoFilter ref="${rng}"/><tableColumns count="${t.columns.length}">${t.columns.map((c, k) => `<tableColumn id="${k + 1}" name="${xe(c)}"/>`).join('')}</tableColumns><tableStyleInfo name="${t.style || 'TableStyleLight15'}" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>`]);
+        ctOver.push(`<Override PartName="/xl/tables/table${tableN}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`);
+      });
+      files.push([`xl/worksheets/sheet${n}.xml`, sh.xml()]);
+      if (rels.length) files.push([`xl/worksheets/_rels/sheet${n}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels.join('')}</Relationships>`]);
+    });
+    const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    files.unshift(
+      ['[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+${this.sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+${ctOver.join('')}</Types>`],
+      ['_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`],
+      ['docProps/core.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xe(meta.title || '')}</dc:title><dc:creator>Lector de cartillas</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`],
+      ['docProps/app.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Microsoft Excel</Application></Properties>`],
+      ['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets>${this.sheets.map((s, i) => `<sheet name="${xe(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`],
+      ['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${this.sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]
+    );
+    files.push(['xl/styles.xml', this.styles.xml()]);
+    return zip(files);
+  };
+  return { Book, colL, ref, absRef, sheetRef };
+})();
+/* ===== Reporte Excel del salón: Dashboard, Por curso, Por estudiante ===== */
+function buildReport(D) {
+  const { colL, ref, absRef, sheetRef } = XL;
+  const B = new XL.Book();
+  const C = { ink: '23272B', muted: '6B737B', line: 'DDE2DF', soft: 'F5F7F6', yellow: 'F2BE2C', ok: '1C8A4B', bad: 'CC3A2A', white: 'FFFFFF', blue: '1F4FBF' };
+  const LV = [
+    { k: 'AD', name: 'Logro destacado', range: '18 – 20', color: '1C8A4B', test: n => n >= 18 },
+    { k: 'A', name: 'Logro esperado', range: '14 – 17', color: '5FA84F', test: n => n >= 14 && n < 18 },
+    { k: 'B', name: 'En proceso', range: '11 – 13', color: 'E0A21B', test: n => n >= 11 && n < 14 },
+    { k: 'C', name: 'En inicio', range: '0 – 10', color: 'CC3A2A', test: n => n < 11 }
+  ];
+  const lvlOf = n => n >= 18 ? 'AD' : n >= 14 ? 'A' : n >= 11 ? 'B' : 'C';
+  const lvlF = x => `IF(${x}>=18,"AD",IF(${x}>=14,"A",IF(${x}>=11,"B","C")))`;
+  const secs = D.sections, S = D.students, N = S.length;
+  const n20 = (sc, mx) => mx > 0 ? Math.max(0, sc) / mx * 20 : 0;
+  S.forEach(s => { s.nota = n20(s.score, s.max); s.eff = s.n ? s.c / s.n : 0; s.secs.forEach(x => { x.nota = n20(x.score, x.max); x.eff = x.n ? x.c / x.n : 0; }); });
+  const pass = D.pass20;
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+
+  const title = { font: { b: true, sz: 18, color: C.white }, fill: C.ink, align: { v: 'center', indent: 1 } };
+  const subtitle = { font: { sz: 10, color: 'C9D0D4' }, fill: C.ink, align: { v: 'center', indent: 1 } };
+  const strip = { fill: C.yellow };
+  const secTitle = { font: { b: true, sz: 13, color: C.ink }, border: { bottom: 'medium:' + C.yellow }, align: { v: 'bottom' } };
+  const expl = { font: { i: true, sz: 9, color: C.muted }, align: { wrap: true, v: 'top' } };
+  const th = { font: { b: true, sz: 10, color: C.white }, fill: C.ink, align: { h: 'center', v: 'center', wrap: true }, border: { all: 'thin:' + C.ink } };
+  const td = (extra = {}) => ({ font: { sz: 10, color: C.ink, ...(extra.font || {}) }, border: { bottom: 'thin:' + C.line }, align: { v: 'center', ...(extra.align || {}) }, ...(extra.num ? { num: extra.num } : {}), ...(extra.fill ? { fill: extra.fill } : {}) });
+  const tdC = (num, extra = {}) => td({ ...extra, num, align: { h: 'center' } });
+
+  /* ======================= Hoja 3: Por estudiante (datos base) ======================= */
+  const E = B.sheet('Por estudiante');
+  E.tab = '2F6FDE';
+  const baseCols = ['Puesto', 'Código', 'Estudiante', 'Nota (0-20)', 'Nivel', 'Estado', 'Puntaje', 'Puntaje máximo', 'Correctas', 'Incorrectas', 'En blanco', 'Eficiencia'];
+  const secFields = ['Puntaje', 'Correctas', 'Incorrectas', 'En blanco', 'Eficiencia', 'Nota (0-20)'];
+  const c0 = 1; // columna B
+  const col = {}; baseCols.forEach((h, i) => col[h] = c0 + i);
+  const secCol = (j, f) => c0 + baseCols.length + j * secFields.length + secFields.indexOf(f);
+  const lastCol = c0 + baseCols.length + secs.length * secFields.length - 1;
+  const HR = 13 + secs.length, R0 = HR + 1, R1 = R0 + Math.max(N, 1) - 1; // encabezado (índice 13 = fila 14) y datos
+  const rng = c => `'Por estudiante'!${absRef(R0, c)}:${absRef(R1, c)}`;
+  const localRng = c => `${absRef(R0, c)}:${absRef(R1, c)}`;
+  const PASS = `Dashboard!$M$3`;
+
+  E.merge(0, 1, 0, lastCol, `Resultados por estudiante — ${D.exam}`, title); E.height(0, 34);
+  E.merge(1, 1, 1, lastCol, `${N} estudiantes · ${D.nQ} preguntas · ${secs.length} cursos · Nota en escala vigesimal (0 a 20) · ${D.date}`, subtitle); E.height(1, 20);
+  E.style(2, 1, 2, lastCol, strip); E.height(2, 5);
+  // Buscador
+  E.set(4, 1, 'Buscar:', { font: { b: true, sz: 11, color: C.ink }, align: { h: 'right', v: 'center' } });
+  E.merge(4, 2, 4, 4, S[0] ? S[0].display : '', { font: { b: true, sz: 11, color: C.blue }, fill: 'FFF4CC', border: { all: 'medium:' + C.yellow }, align: { v: 'center', indent: 1 } });
+  E.dv.push({ sqref: ref(4, 2), formula: localRng(col['Estudiante']), promptTitle: 'Buscar', prompt: 'Elige un estudiante de la lista (o escribe su nombre tal como aparece).' });
+  E.merge(4, 5, 4, 9, '◄ Elige un nombre de la lista desplegable para ver su resumen. Para filtrar, usa las flechas del encabezado de la tabla de abajo.', { font: { i: true, sz: 9, color: C.muted }, align: { v: 'center', wrap: true } });
+  E.height(4, 26);
+  const MIDX = ref(4, lastCol >= 14 ? 14 : lastCol + 1);
+  const midxCell = lastCol >= 14 ? [4, 14] : [4, lastCol + 1];
+  const idx0 = S.findIndex(s => s.display === (S[0] && S[0].display)) + 1;
+  E.set(midxCell[0], midxCell[1], idx0, { font: { sz: 8, color: 'FFFFFF' } }, `IFERROR(MATCH(${ref(4, 2)},${localRng(col['Estudiante'])},0),0)`);
+  const M = '$' + colL(midxCell[1]) + '$' + (midxCell[0] + 1);
+  const pick = (c, blank = '') => `IF(${M}=0,"${blank}",INDEX(${localRng(c)},${M}))`;
+  const cardL = { font: { sz: 9, color: C.muted }, fill: C.soft, align: { h: 'center', v: 'center' }, border: { top: 'medium:2F6FDE' } };
+  const cardV = (num, color) => ({ font: { b: true, sz: 16, color: color || C.ink }, fill: C.soft, align: { h: 'center', v: 'center' }, ...(num ? { num } : {}) });
+  const s0 = S[0];
+  const cards = [['Puesto', col['Puesto'], s0 && 1, '0'], ['Código', col['Código'], s0 && s0.code], ['Nota (0-20)', col['Nota (0-20)'], s0 && s0.nota, '0.0'], ['Nivel', col['Nivel'], s0 && lvlOf(s0.nota)], ['Estado', col['Estado'], s0 && (s0.nota >= pass ? 'Aprobado' : 'Desaprobado')],
+    ['Correctas', col['Correctas'], s0 && s0.c, '0'], ['Incorrectas', col['Incorrectas'], s0 && s0.w, '0'], ['En blanco', col['En blanco'], s0 && s0.b, '0'], ['Eficiencia', col['Eficiencia'], s0 && s0.eff, '0%']];
+  cards.forEach(([lab, c, v, num], i) => {
+    E.set(6, 1 + i, lab, cardL);
+    E.set(7, 1 + i, v ?? '', { ...cardV(num), font: { b: true, sz: ['Estado', 'Código'].includes(lab) ? 12 : 16, color: C.ink } }, pick(c));
+  });
+  E.height(6, 18); E.height(7, 30);
+  E.exprRule(ref(7, 5), `${ref(7, 5)}="Desaprobado"`, B.styles.dxf(C.bad, null, true));
+  E.exprRule(ref(7, 5), `${ref(7, 5)}="Aprobado"`, B.styles.dxf(C.ok, null, true));
+  // mini tabla por curso del estudiante elegido
+  E.set(9, 2, 'Por curso', { font: { b: true, sz: 10, color: C.ink }, align: { h: 'right', v: 'center' } });
+  ['Curso', 'Nota (0-20)', 'Nivel', 'Correctas', 'Incorrectas', 'En blanco', 'Eficiencia'].forEach((h, i) => E.set(9, 3 + i, h, th));
+  secs.forEach((sc, j) => {
+    const r = 10 + j, x = s0 && s0.secs[j];
+    E.set(r, 3, sc.name, td({ font: { b: true, color: sc.color } }));
+    E.set(r, 4, x ? x.nota : '', tdC('0.0', { font: { b: true } }), pick(secCol(j, 'Nota (0-20)')));
+    E.set(r, 5, x ? lvlOf(x.nota) : '', tdC(), `IF(${M}=0,"",${lvlF(ref(r, 4))})`);
+    E.set(r, 6, x ? x.c : '', tdC('0', { font: { color: C.ok, b: true } }), pick(secCol(j, 'Correctas')));
+    E.set(r, 7, x ? x.w : '', tdC('0', { font: { color: C.bad, b: true } }), pick(secCol(j, 'Incorrectas')));
+    E.set(r, 8, x ? x.b : '', tdC('0', { font: { color: C.muted, b: true } }), pick(secCol(j, 'En blanco')));
+    E.set(r, 9, x ? x.eff : '', tdC('0%'), pick(secCol(j, 'Eficiencia')));
+  });
+  E.height(9, 22);
+  if (secs.length) { E.colorScale(`${ref(10, 4)}:${ref(9 + secs.length, 4)}`, [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]); E.dataBar(`${ref(10, 9)}:${ref(9 + secs.length, 9)}`, '2F6FDE'); }
+  // Encabezados agrupados por curso
+  E.merge(HR - 1, c0, HR - 1, c0 + baseCols.length - 1, 'Resumen general', { ...th, fill: '3A4047' });
+  secs.forEach((sc, j) => E.merge(HR - 1, secCol(j, 'Puntaje'), HR - 1, secCol(j, 'Nota (0-20)'), sc.name, { ...th, fill: sc.color }));
+  const heads = [...baseCols, ...secs.flatMap(sc => secFields.map(f => `${sc.name} - ${f}`))];
+  const used = new Set(); const uniq = heads.map(h => { let x = h, k = 2; while (used.has(x.toLowerCase())) x = `${h} ${k++}`; used.add(x.toLowerCase()); return x; });
+  uniq.forEach((h, i) => E.set(HR, c0 + i, h, { ...th, fill: i < baseCols.length ? C.ink : secs[Math.floor((i - baseCols.length) / secFields.length)].color }));
+  E.height(HR, 42);
+  S.forEach((s, i) => {
+    const r = R0 + i, R = x => ref(r, x);
+    E.set(r, col['Puesto'], i + 1, tdC('0'), `RANK(${R(col['Nota (0-20)'])},${localRng(col['Nota (0-20)'])})`);
+    E.set(r, col['Código'], s.code, tdC());
+    E.set(r, col['Estudiante'], s.display, td({ font: { b: true } }));
+    E.set(r, col['Puntaje'], s.score, tdC('0.##'), secs.length ? secs.map((_, j) => R(secCol(j, 'Puntaje'))).join('+') : null);
+    E.set(r, col['Puntaje máximo'], s.max, tdC('0.##'));
+    E.set(r, col['Nota (0-20)'], s.nota, tdC('0.0', { font: { b: true } }), `IF(${R(col['Puntaje máximo'])}>0,MAX(0,${R(col['Puntaje'])})/${R(col['Puntaje máximo'])}*20,0)`);
+    E.set(r, col['Nivel'], lvlOf(s.nota), tdC(), lvlF(R(col['Nota (0-20)'])));
+    E.set(r, col['Estado'], s.nota >= pass ? 'Aprobado' : 'Desaprobado', tdC(), `IF(${R(col['Nota (0-20)'])}>=${PASS},"Aprobado","Desaprobado")`);
+    ['Correctas', 'Incorrectas', 'En blanco'].forEach((f, k) => E.set(r, col[f], [s.c, s.w, s.b][k], tdC('0'), secs.length ? secs.map((_, j) => R(secCol(j, f))).join('+') : null));
+    E.set(r, col['Eficiencia'], s.eff, tdC('0%'), `IFERROR(${R(col['Correctas'])}/(${R(col['Correctas'])}+${R(col['Incorrectas'])}+${R(col['En blanco'])}),0)`);
+    secs.forEach((sc, j) => {
+      const x = s.secs[j], P = f => R(secCol(j, f));
+      E.set(r, secCol(j, 'Puntaje'), x.score, tdC('0.##'));
+      E.set(r, secCol(j, 'Correctas'), x.c, tdC('0'));
+      E.set(r, secCol(j, 'Incorrectas'), x.w, tdC('0'));
+      E.set(r, secCol(j, 'En blanco'), x.b, tdC('0'));
+      E.set(r, secCol(j, 'Eficiencia'), x.eff, tdC('0%'), `IFERROR(${P('Correctas')}/(${P('Correctas')}+${P('Incorrectas')}+${P('En blanco')}),0)`);
+      E.set(r, secCol(j, 'Nota (0-20)'), x.nota, tdC('0.0', { font: { b: true } }), sc.max > 0 ? `MAX(0,${P('Puntaje')})/${sc.max}*20` : '0');
+    });
+  });
+  if (N) {
+    E.table({ name: 'TablaEstudiantes', r1: HR, c1: c0, r2: R1, c2: lastCol, columns: uniq, style: 'TableStyleLight15' });
+    E.colorScale(localRng(col['Nota (0-20)']).replace(/\$/g, ''), [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]);
+    E.dataBar(localRng(col['Eficiencia']).replace(/\$/g, ''), '2F6FDE');
+    secs.forEach((sc, j) => { E.colorScale(localRng(secCol(j, 'Nota (0-20)')).replace(/\$/g, ''), [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]); E.dataBar(localRng(secCol(j, 'Eficiencia')).replace(/\$/g, ''), sc.color); });
+    const st = localRng(col['Estado']).replace(/\$/g, ''), first = ref(R0, col['Estado']);
+    E.exprRule(st, `${first}="Desaprobado"`, B.styles.dxf(C.bad, 'FBE3DF', true));
+    E.exprRule(st, `${first}="Aprobado"`, B.styles.dxf(C.ok, 'DDF1E5', true));
+  }
+  E.freeze = { r: HR + 1, c: col['Estudiante'] + 1 };
+  E.width(0, 2); baseCols.forEach((h, i) => E.width(c0 + i, h === 'Estudiante' ? 30 : h === 'Estado' ? 14 : 11));
+  secs.forEach((_, j) => secFields.forEach(f => E.width(secCol(j, f), 11)));
+  E.merge(R1 + 2, 1, R1 + 3, 12, `Nivel: AD logro destacado (18-20), A logro esperado (14-17), B en proceso (11-13), C en inicio (0-10). Eficiencia = correctas ÷ preguntas calificadas. La nota aprobatoria se cambia en la hoja Dashboard (celda M3).`, expl);
+  E.landscape = true;
+
+  /* ======================= Hoja 2: Por curso ======================= */
+  const P = B.sheet('Por curso');
+  P.tab = '1C8A4B';
+  const PC = ['Curso', 'Preguntas', 'N° de preguntas', 'Puntaje máximo', 'Puntaje promedio', 'Correctas (total)', 'Incorrectas (total)', 'En blanco (total)', 'Correctas promedio por estudiante', 'Eficiencia del curso', 'Nota promedio (0-20)', 'Nivel'];
+  const pc = {}; PC.forEach((h, i) => pc[h] = 1 + i);
+  P.merge(0, 1, 0, PC.length, `Resultados por curso — ${D.exam}`, title); P.height(0, 34);
+  P.merge(1, 1, 1, PC.length, `Totales del salón (${N} estudiantes). Eficiencia = correctas ÷ (correctas + incorrectas + en blanco). Nota vigesimal = puntaje ÷ puntaje máximo × 20.`, subtitle); P.height(1, 20);
+  P.style(2, 1, 2, PC.length, strip); P.height(2, 5);
+  const PH = 4; PC.forEach((h, i) => P.set(PH, 1 + i, h, th)); P.height(PH, 44);
+  const nStud = `COUNTA(${rng(col['Estudiante'])})`;
+  secs.forEach((sc, j) => {
+    const r = PH + 1 + j, R = x => ref(r, x);
+    const tot = f => S.reduce((a, s) => a + s.secs[j][f], 0);
+    const cc = tot('c'), ww = tot('w'), bb = tot('b');
+    P.set(r, pc['Curso'], sc.name, td({ font: { b: true, color: sc.color } }));
+    P.set(r, pc['Preguntas'], `${sc.from} – ${sc.to}`, tdC());
+    P.set(r, pc['N° de preguntas'], sc.n, tdC('0'));
+    P.set(r, pc['Puntaje máximo'], sc.max, tdC('0.##'));
+    P.set(r, pc['Puntaje promedio'], avg(S.map(s => s.secs[j].score)), tdC('0.00'), `IFERROR(AVERAGE(${rng(secCol(j, 'Puntaje'))}),0)`);
+    P.set(r, pc['Correctas (total)'], cc, tdC('0', { font: { color: C.ok, b: true } }), `SUM(${rng(secCol(j, 'Correctas'))})`);
+    P.set(r, pc['Incorrectas (total)'], ww, tdC('0', { font: { color: C.bad, b: true } }), `SUM(${rng(secCol(j, 'Incorrectas'))})`);
+    P.set(r, pc['En blanco (total)'], bb, tdC('0', { font: { color: C.muted, b: true } }), `SUM(${rng(secCol(j, 'En blanco'))})`);
+    P.set(r, pc['Correctas promedio por estudiante'], N ? cc / N : 0, tdC('0.0'), `IFERROR(${R(pc['Correctas (total)'])}/${nStud},0)`);
+    P.set(r, pc['Eficiencia del curso'], (cc + ww + bb) ? cc / (cc + ww + bb) : 0, tdC('0.0%', { font: { b: true } }), `IFERROR(${R(pc['Correctas (total)'])}/(${R(pc['Correctas (total)'])}+${R(pc['Incorrectas (total)'])}+${R(pc['En blanco (total)'])}),0)`);
+    const np = avg(S.map(s => s.secs[j].nota));
+    P.set(r, pc['Nota promedio (0-20)'], np, tdC('0.0', { font: { b: true, sz: 11 } }), `IFERROR(AVERAGE(${rng(secCol(j, 'Nota (0-20)'))}),0)`);
+    P.set(r, pc['Nivel'], lvlOf(np), tdC(null, { font: { b: true } }), lvlF(R(pc['Nota promedio (0-20)'])));
+    P.height(r, 22);
+  });
+  const PT = PH + 1 + secs.length, RS = x => `${ref(PH + 1, x)}:${ref(PT - 1, x)}`;
+  const totS = { font: { b: true, sz: 10, color: C.ink }, fill: 'FFF4CC', border: { top: 'medium:' + C.ink }, align: { h: 'center', v: 'center' } };
+  const TC = S.reduce((a, s) => a + s.c, 0), TW = S.reduce((a, s) => a + s.w, 0), TB = S.reduce((a, s) => a + s.b, 0);
+  P.set(PT, pc['Curso'], 'Total del examen', { ...totS, align: { h: 'left', v: 'center' } });
+  P.set(PT, pc['Preguntas'], `1 – ${D.nQ}`, totS);
+  P.set(PT, pc['N° de preguntas'], secs.reduce((a, s) => a + s.n, 0), { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['N° de preguntas'])})` : null);
+  P.set(PT, pc['Puntaje máximo'], secs.reduce((a, s) => a + s.max, 0), { ...totS, num: '0.##' }, secs.length ? `SUM(${RS(pc['Puntaje máximo'])})` : null);
+  P.set(PT, pc['Puntaje promedio'], avg(S.map(s => s.score)), { ...totS, num: '0.00' }, `IFERROR(AVERAGE(${rng(col['Puntaje'])}),0)`);
+  P.set(PT, pc['Correctas (total)'], TC, { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['Correctas (total)'])})` : null);
+  P.set(PT, pc['Incorrectas (total)'], TW, { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['Incorrectas (total)'])})` : null);
+  P.set(PT, pc['En blanco (total)'], TB, { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['En blanco (total)'])})` : null);
+  P.set(PT, pc['Correctas promedio por estudiante'], N ? TC / N : 0, { ...totS, num: '0.0' }, `IFERROR(${ref(PT, pc['Correctas (total)'])}/${nStud},0)`);
+  const effT = (TC + TW + TB) ? TC / (TC + TW + TB) : 0;
+  P.set(PT, pc['Eficiencia del curso'], effT, { ...totS, num: '0.0%' }, `IFERROR(${ref(PT, pc['Correctas (total)'])}/(${ref(PT, pc['Correctas (total)'])}+${ref(PT, pc['Incorrectas (total)'])}+${ref(PT, pc['En blanco (total)'])}),0)`);
+  const avgNota = avg(S.map(s => s.nota));
+  P.set(PT, pc['Nota promedio (0-20)'], avgNota, { ...totS, num: '0.0' }, `IFERROR(AVERAGE(${rng(col['Nota (0-20)'])}),0)`);
+  P.set(PT, pc['Nivel'], lvlOf(avgNota), totS, lvlF(ref(PT, pc['Nota promedio (0-20)'])));
+  P.height(PT, 24);
+  if (secs.length) {
+    P.dataBar(RS(pc['Eficiencia del curso']), '1C8A4B');
+    P.colorScale(RS(pc['Nota promedio (0-20)']), [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]);
+  }
+  P.width(0, 2); P.width(1, 24); for (let i = 2; i <= PC.length; i++) P.width(i, 13);
+  // gráfico: correctas / incorrectas / en blanco por curso
+  const chartTop = PT + 2;
+  if (secs.length) {
+    P.merge(chartTop, 1, chartTop, PC.length, '¿Cómo se reparten las respuestas en cada curso?', secTitle); P.height(chartTop, 24);
+    P.chart({
+      type: 'bar', dir: 'bar', stacked: true, legend: 'b', gap: 45, labelColor: 'FFFFFF',
+      catRef: sheetRef(P, PH + 1, 1, PT - 1, 1), cats: secs.map(s => s.name),
+      series: [
+        { name: 'Correctas', nameRef: sheetRef(P, PH, pc['Correctas (total)'], PH, pc['Correctas (total)']).split(':')[0], ref: sheetRef(P, PH + 1, pc['Correctas (total)'], PT - 1, pc['Correctas (total)']), values: secs.map((_, j) => S.reduce((a, s) => a + s.secs[j].c, 0)), color: '1C8A4B' },
+        { name: 'Incorrectas', nameRef: sheetRef(P, PH, pc['Incorrectas (total)'], PH, pc['Incorrectas (total)']).split(':')[0], ref: sheetRef(P, PH + 1, pc['Incorrectas (total)'], PT - 1, pc['Incorrectas (total)']), values: secs.map((_, j) => S.reduce((a, s) => a + s.secs[j].w, 0)), color: 'CC3A2A' },
+        { name: 'En blanco', nameRef: sheetRef(P, PH, pc['En blanco (total)'], PH, pc['En blanco (total)']).split(':')[0], ref: sheetRef(P, PH + 1, pc['En blanco (total)'], PT - 1, pc['En blanco (total)']), values: secs.map((_, j) => S.reduce((a, s) => a + s.secs[j].b, 0)), color: 'A9B1B8' }
+      ]
+    }, chartTop + 1, 1, chartTop + 3 + Math.max(10, secs.length * 3), PC.length + 1);
+  }
+  const noteRow = chartTop + 5 + Math.max(10, secs.length * 3);
+  P.merge(noteRow, 1, noteRow + 2, PC.length, 'Cómo leer esta hoja: "Correctas (total)" suma las respuestas correctas de todo el salón en ese curso. "Eficiencia del curso" es el porcentaje de respuestas correctas sobre todas las preguntas del curso respondidas por el salón. "Nota promedio" es el promedio de las notas vigesimales del curso. Nivel: AD (18-20), A (14-17), B (11-13), C (0-10).', expl);
+  P.freeze = { r: PH + 1, c: 0 };
+  P.landscape = true;
+
+  /* ======================= Hoja 1: Dashboard ======================= */
+  const Dh = B.sheet('Dashboard');
+  B.sheets = [Dh, P, E]; // orden: Dashboard, Por curso, Por estudiante
+  Dh.tab = C.yellow;
+  Dh.width(0, 2); for (let c = 1; c <= 12; c++) Dh.width(c, 11.5); Dh.width(13, 2);
+  Dh.merge(1, 1, 1, 12, `Resultados del salón — ${D.exam}`, { ...title, font: { b: true, sz: 20, color: C.white } }); Dh.height(1, 40);
+  Dh.merge(2, 1, 2, 9, `${D.nQ} preguntas · ${secs.length} cursos · ${N} estudiantes evaluados · escala vigesimal (0 a 20) · ${D.date}`, subtitle);
+  Dh.merge(2, 10, 2, 11, 'Nota aprobatoria:', { font: { b: true, sz: 10, color: C.white }, fill: C.ink, align: { h: 'right', v: 'center' } });
+  Dh.set(2, 12, pass, { font: { b: true, sz: 12, color: C.blue }, fill: 'FFF4CC', border: { all: 'medium:' + C.yellow }, align: { h: 'center', v: 'center' }, num: '0.##' });
+  Dh.height(2, 24);
+  Dh.style(3, 1, 3, 12, strip); Dh.height(3, 5);
+  // KPIs
+  const nota = rng(col['Nota (0-20)']), names = rng(col['Estudiante']);
+  const nPass = S.filter(s => s.nota >= pass).length;
+  const best = S.reduce((a, s) => !a || s.nota > a.nota ? s : a, null), worst = S.reduce((a, s) => !a || s.nota < a.nota ? s : a, null);
+  const kpis = [
+    ['Estudiantes evaluados', N, '0', 'cartillas leídas', `COUNTA(${names})`, '"cartillas leídas"', '2F6FDE'],
+    ['Promedio del salón', avgNota, '0.0', `nivel ${lvlOf(avgNota)} · sobre 20`, `IFERROR(AVERAGE(${nota}),0)`, `"nivel "&${lvlF(`IFERROR(AVERAGE(${nota}),0)`)}&" · sobre 20"`, C.ink],
+    ['Aprobados', nPass, '0', `${N ? Math.round(nPass / N * 100) : 0}% del salón`, `COUNTIF(${nota},">="&$M$3)`, `TEXT(IFERROR(COUNTIF(${nota},">="&$M$3)/COUNTA(${names}),0),"0%")&" del salón"`, C.ok],
+    ['Eficiencia total', effT, '0%', 'respuestas correctas', `IFERROR(SUM(${rng(col['Correctas'])})/(SUM(${rng(col['Correctas'])})+SUM(${rng(col['Incorrectas'])})+SUM(${rng(col['En blanco'])})),0)`, '"respuestas correctas"', 'E0A21B'],
+    ['Nota más alta', best ? best.nota : 0, '0.0', best ? best.display : '', `IFERROR(MAX(${nota}),0)`, `IFERROR(INDEX(${names},MATCH(MAX(${nota}),${nota},0)),"")`, C.ok],
+    ['Nota más baja', worst ? worst.nota : 0, '0.0', worst ? worst.display : '', `IFERROR(MIN(${nota}),0)`, `IFERROR(INDEX(${names},MATCH(MIN(${nota}),${nota},0)),"")`, C.bad]
+  ];
+  kpis.forEach(([lab, v, num, det, f, fdet, color], i) => {
+    const c1 = 1 + i * 2;
+    Dh.merge(5, c1, 5, c1 + 1, lab, { font: { b: true, sz: 9, color: C.muted }, fill: C.soft, border: { top: 'thick:' + color }, align: { h: 'center', v: 'center' } });
+    Dh.merge(6, c1, 6, c1 + 1, v, { font: { b: true, sz: 24, color }, fill: C.soft, align: { h: 'center', v: 'center' }, num }, f);
+    Dh.merge(7, c1, 7, c1 + 1, det, { font: { sz: 9, color: C.muted }, fill: C.soft, align: { h: 'center', v: 'center', wrap: true } }, fdet);
+  });
+  Dh.height(5, 20); Dh.height(6, 40); Dh.height(7, 26);
+  // Rendimiento por curso
+  Dh.merge(9, 1, 9, 12, 'Rendimiento por curso', secTitle); Dh.height(9, 24);
+  Dh.merge(10, 1, 10, 12, 'La barra muestra la eficiencia de cada curso: qué porcentaje de las respuestas del salón fueron correctas. Los cursos con barra más corta son los que conviene reforzar primero.', expl); Dh.height(10, 28);
+  if (secs.length) {
+    Dh.chart({
+      type: 'bar', dir: 'bar', numFmt: '0%', labelFmt: '0%', max: 1, gap: 40,
+      catRef: sheetRef(P, PH + 1, 1, PT - 1, 1), cats: secs.map(s => s.name),
+      series: [{ name: 'Eficiencia', ref: sheetRef(P, PH + 1, pc['Eficiencia del curso'], PT - 1, pc['Eficiencia del curso']), values: secs.map((_, j) => { const cc = S.reduce((a, s) => a + s.secs[j].c, 0), t = S.reduce((a, s) => a + s.secs[j].n, 0); return t ? cc / t : 0; }), color: '2F6FDE', pointColors: secs.map(s => s.color) }]
+    }, 11, 1, 12 + Math.max(12, secs.length * 2 + 4), 7);
+    Dh.merge(11, 7, 11, 9, 'Curso', th); ['Eficiencia', 'Nota prom.', 'Nivel'].forEach((h, i) => Dh.set(11, 10 + i, h, th));
+    Dh.height(11, 22);
+    secs.forEach((sc, j) => {
+      const r = 12 + j, pr = PH + 1 + j;
+      Dh.merge(r, 7, r, 9, sc.name, td({ font: { b: true, color: sc.color } }), `'Por curso'!${ref(pr, pc['Curso'])}`);
+      Dh.set(r, 10, (() => { const cc = S.reduce((a, s) => a + s.secs[j].c, 0), t = S.reduce((a, s) => a + s.secs[j].n, 0); return t ? cc / t : 0; })(), tdC('0%', { font: { b: true } }), `'Por curso'!${ref(pr, pc['Eficiencia del curso'])}`);
+      const np = avg(S.map(s => s.secs[j].nota));
+      Dh.set(r, 11, np, tdC('0.0'), `'Por curso'!${ref(pr, pc['Nota promedio (0-20)'])}`);
+      Dh.set(r, 12, lvlOf(np), tdC(null, { font: { b: true } }), `'Por curso'!${ref(pr, pc['Nivel'])}`);
+      Dh.height(r, 20);
+    });
+    Dh.dataBar(`${ref(12, 10)}:${ref(11 + secs.length, 10)}`, '2F6FDE');
+    Dh.colorScale(`${ref(12, 11)}:${ref(11 + secs.length, 11)}`, [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]);
+  }
+  let y = 13 + Math.max(12, secs.length * 2 + 4) + 1;
+  // Niveles y aprobación
+  Dh.merge(y, 1, y, 12, 'Niveles de logro y aprobación', secTitle); Dh.height(y, 24);
+  Dh.merge(y + 1, 1, y + 1, 12, `Izquierda: cuántos estudiantes hay en cada nivel de logro (escala del Minedu). Derecha: proporción de aprobados con nota mayor o igual a la nota aprobatoria (${pass}).`, expl); Dh.height(y + 1, 28);
+  const tY = y + 17; // tabla de datos de los gráficos
+  const lvCounts = LV.map(l => S.filter(s => l.test(s.nota)).length);
+  Dh.chart({
+    type: 'bar', dir: 'col', gap: 50, numFmt: '0', labelFmt: '0',
+    catRef: sheetRef(Dh, tY + 1, 2, tY + 4, 2), cats: LV.map(l => l.name),
+    series: [{ name: 'Estudiantes', ref: sheetRef(Dh, tY + 1, 5, tY + 4, 5), values: lvCounts, color: '2F6FDE', pointColors: LV.map(l => l.color) }]
+  }, y + 2, 1, y + 16, 7);
+  Dh.chart({
+    type: 'doughnut', legend: 'b', labelFmt: '0%', showVal: false,
+    catRef: sheetRef(Dh, tY + 1, 8, tY + 2, 8), cats: ['Aprobados', 'Desaprobados'],
+    series: [{ name: 'Estudiantes', ref: sheetRef(Dh, tY + 1, 10, tY + 2, 10), values: [nPass, N - nPass], color: C.ok, pointColors: [C.ok, C.bad] }]
+  }, y + 2, 8, y + 16, 13);
+  // tablas bajo los gráficos (son su fuente de datos)
+  Dh.set(tY, 1, 'Nivel', th); Dh.merge(tY, 2, tY, 3, 'Descripción', th); Dh.set(tY, 4, 'Rango', th); Dh.set(tY, 5, 'Estudiantes', th); Dh.set(tY, 6, '% del salón', th);
+  LV.forEach((l, i) => {
+    const r = tY + 1 + i;
+    Dh.set(r, 1, l.k, tdC(null, { font: { b: true, color: l.color } }));
+    Dh.merge(r, 2, r, 3, l.name, td({ font: { b: true, color: l.color } }));
+    Dh.set(r, 4, l.range, tdC());
+    const f = l.k === 'AD' ? `COUNTIF(${nota},">=18")` : l.k === 'A' ? `COUNTIFS(${nota},">=14",${nota},"<18")` : l.k === 'B' ? `COUNTIFS(${nota},">=11",${nota},"<14")` : `COUNTIF(${nota},"<11")`;
+    Dh.set(r, 5, lvCounts[i], tdC('0', { font: { b: true } }), f);
+    Dh.set(r, 6, N ? lvCounts[i] / N : 0, tdC('0%'), `IFERROR(${ref(r, 5)}/SUM(${ref(tY + 1, 5)}:${ref(tY + 4, 5)}),0)`);
+  });
+  Dh.dataBar(`${ref(tY + 1, 6)}:${ref(tY + 4, 6)}`, '2F6FDE');
+
+  Dh.merge(tY, 8, tY, 9, 'Condición', th); Dh.set(tY, 10, 'Estudiantes', th); Dh.set(tY, 11, '% del salón', th);
+  [['Aprobados', nPass, `COUNTIF(${nota},">="&$M$3)`, C.ok], ['Desaprobados', N - nPass, `COUNTA(${names})-${ref(tY + 1, 10)}`, C.bad]].forEach(([lab, v, f, color], i) => {
+    const r = tY + 1 + i;
+    Dh.merge(r, 8, r, 9, lab, td({ font: { b: true, color } }));
+    Dh.set(r, 10, v, tdC('0', { font: { b: true } }), f);
+    Dh.set(r, 11, N ? v / N : 0, tdC('0%'), `IFERROR(${ref(r, 10)}/COUNTA(${names}),0)`);
+  });
+  for (let r = tY; r <= tY + 4; r++) Dh.height(r, 20);
+  y = tY + 6;
+  // Destacados
+  Dh.merge(y, 1, y, 12, 'Destacados', secTitle); Dh.height(y, 24);
+  Dh.merge(y + 1, 1, y + 1, 6, 'Los 5 mejores puntajes', { font: { b: true, sz: 10, color: C.ink }, align: { v: 'center' } });
+  Dh.merge(y + 1, 8, y + 1, 12, 'Preguntas más difíciles (menor % de aciertos)', { font: { b: true, sz: 10, color: C.ink }, align: { v: 'center' } });
+  Dh.set(y + 2, 1, '#', th); Dh.merge(y + 2, 2, y + 2, 4, 'Estudiante', th); Dh.set(y + 2, 5, 'Nota', th); Dh.set(y + 2, 6, 'Nivel', th);
+  const top = S.slice(0, 5);
+  top.forEach((s, i) => {
+    const r = y + 3 + i, rr = R0 + i;
+    Dh.set(r, 1, i + 1, tdC('0', { font: { b: true } }));
+    Dh.merge(r, 2, r, 4, s.display, td({ font: { b: true } }), `'Por estudiante'!${ref(rr, col['Estudiante'])}`);
+    Dh.set(r, 5, s.nota, tdC('0.0', { font: { b: true, color: C.ok } }), `'Por estudiante'!${ref(rr, col['Nota (0-20)'])}`);
+    Dh.set(r, 6, lvlOf(s.nota), tdC(), `'Por estudiante'!${ref(rr, col['Nivel'])}`);
+    Dh.height(r, 20);
+  });
+  ['Pregunta', 'Curso', '% aciertos', 'Clave', 'Más marcada'].forEach((h, i) => Dh.set(y + 2, 8 + i, h, th));
+  (D.hard || []).slice(0, 5).forEach((q, i) => {
+    const r = y + 3 + i;
+    Dh.set(r, 8, `P${q.q}`, tdC(null, { font: { b: true } }));
+    Dh.set(r, 9, q.sec, td());
+    Dh.set(r, 10, q.p, tdC('0%', { font: { b: true, color: C.bad } }));
+    Dh.set(r, 11, q.key, tdC(null, { font: { color: C.ok, b: true } }));
+    Dh.set(r, 12, q.most, tdC());
+  });
+  Dh.height(y + 2, 22);
+  y = y + 10;
+  Dh.merge(y, 1, y, 12, 'Cómo leer este dashboard', secTitle); Dh.height(y, 24);
+  const help = [
+    '• Promedio del salón: promedio de las notas en escala vigesimal (0 a 20). Nota = puntaje obtenido ÷ puntaje máximo × 20; las preguntas pueden valer distinto según el curso.',
+    '• Eficiencia: porcentaje de respuestas correctas sobre las preguntas calificadas. Una pregunta en blanco o con doble marca cuenta como no acertada.',
+    '• Aprobados: estudiantes con nota mayor o igual a la nota aprobatoria (celda M3, puedes cambiarla y todo el libro se recalcula).',
+    '• Niveles de logro: AD logro destacado (18-20), A logro esperado (14-17), B en proceso (11-13), C en inicio (0-10).',
+    '• Hoja "Por curso": correctas, incorrectas y en blanco de todo el salón, eficiencia y nota promedio de cada curso.',
+    '• Hoja "Por estudiante": una fila por alumno con su nota general y por curso. Usa el buscador (celda C5) o las flechas de filtro del encabezado para ordenar y buscar.'
+  ];
+  help.forEach((t, i) => { Dh.merge(y + 1 + i, 1, y + 1 + i, 12, t, { font: { sz: 10, color: '3A4047' }, fill: C.soft, align: { v: 'center', wrap: true, indent: 1 } }); Dh.height(y + 1 + i, 30); });
+  Dh.set(y + 8, 1, `Generado por el Lector de cartillas el ${D.date}.`, { font: { i: true, sz: 8, color: C.muted } });
+  Dh.landscape = false;
+  return B.build({ title: `Resultados — ${D.exam}` });
+}
 /* ===== Utilidades ===== */
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1318,7 +1888,7 @@ function resultsView(ex) {
   const effStyle = e => `background:${heat(e)};color:#fff`;
   const tools = `<div class="row" style="justify-content:space-between">
       <input type="text" id="search" placeholder="Buscar por nombre o código" value="${esc(S.q)}" style="max-width:300px">
-      <div class="row"><button class="btn sm" data-act="csv">Descargar CSV</button><button class="btn sm" data-act="copy">Copiar para Excel</button></div></div>`;
+      <div class="row"><button class="btn sm primary" data-act="excel">Exportar Excel</button><button class="btn sm" data-act="csv">Descargar CSV</button><button class="btn sm" data-act="copy">Copiar para Excel</button></div></div>`;
   if (S.view === 'movil') {
     return `<div class="panel">${tools}
       <div class="row small" style="margin-top:10px">Ordenar: <select id="sortSel" style="width:auto">${[['nota', 'Nota'], ['eff', 'Eficiencia'], ['name', 'Nombre'], ['id', 'Código'], ...secs.map(s => ['s:' + s.sec.id, s.sec.name])].map(([k, l]) => `<option value="${k}" ${S.sort.k === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
@@ -1330,7 +1900,7 @@ function resultsView(ex) {
   }
   return `<div class="panel"><div class="row" style="justify-content:space-between">
       <input type="text" id="search" placeholder="Buscar por nombre o código" value="${esc(S.q)}" style="max-width:300px">
-      <div class="row"><button class="btn sm" data-act="csv">Descargar CSV</button><button class="btn sm" data-act="copy">Copiar para Excel</button></div></div>
+      <div class="row"><button class="btn sm primary" data-act="excel">Exportar Excel</button><button class="btn sm" data-act="csv">Descargar CSV</button><button class="btn sm" data-act="copy">Copiar para Excel</button></div></div>
     <div class="scroll-x" style="margin-top:12px"><table class="res"><thead><tr><th>#</th>${th('id', 'Código')}${th('name', 'Alumno')}${th('nota', 'Nota')}<th>Puntaje</th>${th('eff', 'Eficiencia')}<th>C / I / B</th>
       ${secs.map(s => th('s:' + s.sec.id, `<span class="swatch" style="background:${s.sec.color};width:10px;height:10px"></span> ${esc(s.sec.name)}`)).join('')}</tr></thead>
     <tbody>${list.map((x, i) => `<tr data-act="detail" data-id="${x.r.id}"><td class="muted">${i + 1}</td><td>${esc(x.r.studentId || '—')}</td><td>${esc(x.r.name || 'Sin nombre')}${(x.r.doubts || []).length || x.r.idDoubt ? ` <span class="st warn" title="Tiene lecturas por revisar">revisar</span>` : ''}</td>
@@ -1457,6 +2027,30 @@ function detailView() {
 }
 
 /* ===== Exportar ===== */
+// Datos para el Excel del salón (dashboard, por curso, por estudiante)
+function excelData(ex) {
+  const rows = rowsFor(ex).sort((a, b) => b.g.T.score - a.g.T.score || (a.r.name || '').localeCompare(b.r.name || ''));
+  const base = rows.length ? rows[0].g.secs : grade(ex, []).secs;
+  const sections = base.map(g => ({ name: g.sec.name, color: (g.sec.color || '#5B6770').replace('#', '').toUpperCase(), from: g.sec.from ?? '—', to: g.sec.to ?? '—', n: g.n, max: g.max }));
+  const seen = {};
+  const students = rows.map((x, i) => {
+    let display = (x.r.name || '').trim() || (x.r.studentId ? `Código ${x.r.studentId}` : `Hoja ${i + 1}`);
+    if (seen[display]) display += ` (${x.r.studentId || i + 1})`;
+    seen[display] = 1;
+    return { code: x.r.studentId || '', name: x.r.name || '', display, score: x.g.T.score, max: x.g.T.max, c: x.g.T.c, w: x.g.T.w, b: x.g.T.b, n: x.g.T.n,
+      secs: x.g.secs.map(s => ({ score: s.score, max: s.max, c: s.c, w: s.w, b: s.b, n: s.n })) };
+  });
+  const n = rows.length;
+  const hard = Array.from({ length: ex.nQ }, (_, i) => {
+    const k = ex.key[i]; if (!k || k === '*' || !n) return null;
+    const ok = rows.filter(x => x.g.per[i].st === 'ok').length;
+    const cnt = {}; rows.forEach(x => { const a = x.r.answers[i] || ''; const key = !a ? 'En blanco' : a.length > 1 ? 'Doble marca' : a; cnt[key] = (cnt[key] || 0) + 1; });
+    const most = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+    return { q: i + 1, sec: secOf(ex, i + 1).name, p: ok / n, key: k, most: most ? most[0] : '' };
+  }).filter(Boolean).sort((a, b) => a.p - b.p).slice(0, 5);
+  return { exam: ex.name, date: new Date().toLocaleDateString('es-PE'), nQ: ex.nQ, pass20: ex.scale > 0 ? +ex.pass * 20 / ex.scale : 11, sections, students, hard };
+}
+
 function tableData(ex) {
   const rows = rowsFor(ex).sort((a, b) => b.g.T.score - a.g.T.score);
   const secs = rows.length ? rows[0].g.secs : [];
@@ -1538,6 +2132,15 @@ document.addEventListener('click', async e => {
     case 'delres': if (confirm('¿Eliminar esta hoja?')) { const id = S.detail; delete S.results[id]; Store.del('res', id); S.detail = null; render(); } break;
     case 'sort': { const k = el.dataset.k; S.sort = { k, d: S.sort.k === k ? -S.sort.d : (k === 'name' || k === 'id' ? 1 : -1) }; render(); break; }
     case 'item': S.item = S.item === +el.dataset.i ? null : +el.dataset.i; render(); break;
+    case 'excel': {
+      try {
+        const data = excelData(ex);
+        if (!data.students.length) { toast('Todavía no hay hojas para exportar.'); break; }
+        const bytes = buildReport(data);
+        await saveFile(`resultados-${slug(ex.name)}.xlsx`, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      } catch (err) { console.error(err); toast('No se pudo crear el Excel.'); }
+      break;
+    }
     case 'csv': { const t = tableData(ex); saveFile(`resultados-${slug(ex.name)}.csv`, '\ufeff' + t.map(r => r.map(csvCell).join(',')).join('\n')); break; }
     case 'copy': {
       const t = tableData(ex).map(r => r.join('\t')).join('\n');
