@@ -181,6 +181,17 @@ table.res tbody tr:hover{background:var(--sunk)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--graphite);color:#fff;padding:10px 18px;border-radius:999px;z-index:80;font-weight:700;box-shadow:0 8px 20px rgba(0,0,0,.25);max-width:90vw;text-align:center}
 .hidden{display:none!important}
 #printArea{display:none}
+.cam.has-result{display:block;background:var(--surface);border:1px solid var(--line)}
+.cam.has-result video,.cam.has-result canvas,.cam.has-result .pill{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.cam-result{padding:12px}
+.cr-head{display:flex;align-items:center;justify-content:center;gap:10px}
+.cr-score{font-family:var(--display);font-weight:700;font-size:1.9rem;text-align:center;line-height:1.1}
+.cr-score small{display:block;font-size:1.15rem}
+.cam{scroll-margin-top:calc(110px + env(safe-area-inset-top,0px))}
+.cr-name{text-align:center;color:var(--muted);margin:2px 0 8px}
+.cr-warn{text-align:center;font-weight:700;color:#8A5A00;background:#FCEFC7;border-radius:8px;padding:6px;margin-bottom:8px}
+.cam-result .rev{max-width:520px;margin:0 auto}
+.cam .pill{max-width:calc(100% - 24px)}
 /* botones de vista y tema */
 .tools{display:flex;gap:6px;align-items:center}
 .icon-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#EEF1F2;border-radius:999px;padding:6px 12px;cursor:pointer;font-weight:700;font-size:.85rem;white-space:nowrap}
@@ -842,10 +853,10 @@ async function fileToCanvas(file) {
 }
 
 function handleReadAll(R, ex, source) {
-  if (!R.ok) return handleRead(R, ex, source);
+  if (!R.ok) { toast(R.err); return handleRead(R, ex, source); }
   if (S.scanMode === 'clave') return handleRead(R.sheets[0], ex, source);
-  R.sheets.forEach((sh, i) => handleRead(sh, ex, R.sheets.length > 1 ? `${source} · cartilla ${i + 1} de ${R.sheets.length}` : source));
-  if (R.sheets.length > 1) toast(`${R.sheets.length} cartillas leídas en la imagen`);
+  const ids = R.sheets.map((sh, i) => handleRead(sh, ex, R.sheets.length > 1 ? `${source} · cartilla ${i + 1} de ${R.sheets.length}` : source)).filter(Boolean).map(r => r.id);
+  if (ids.length) { S.camResult = ids; S.camIdx = 0; render(); const el = $('#camBox'); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
 }
 function handleRead(r, ex, source) {
   if (!r.ok) { S.log.unshift({ t: source, e: r.err }); render(); return null; }
@@ -872,6 +883,31 @@ function handleRead(r, ex, source) {
 }
 
 /* ===== Cámara ===== */
+// Dibuja sobre el video lo que se está leyendo: verde = correcta, rojo = incorrecta, punteado = clave
+function drawLive(o, sh, r, g, L, ex) {
+  const map = sh.map, hasKey = ex.key.some(Boolean);
+  const P = sh.corners;
+  o.strokeStyle = 'rgba(61,220,132,.9)'; o.lineWidth = 3; o.beginPath(); P.forEach((p, i) => i ? o.lineTo(p.x, p.y) : o.moveTo(p.x, p.y)); o.closePath(); o.stroke();
+  const circle = (x, y, color, dash) => {
+    const c = map(x, y), e = map(x + L.r, y), rr = Math.hypot(e.x - c.x, e.y - c.y) * 1.3;
+    o.setLineDash(dash ? [3, 3] : []); o.strokeStyle = color; o.lineWidth = Math.max(2, rr * 0.28);
+    o.beginPath(); o.arc(c.x, c.y, rr, 0, 7); o.stroke(); o.setLineDash([]);
+  };
+  L.q.forEach((q, i) => {
+    const p = g.per[i], a = r.answers[i] || '';
+    const col = !hasKey || p.st === 'nokey' ? '#2F6FDE' : (p.st === 'ok' || p.st === 'bonus') ? '#1FD16B' : '#FF3B30';
+    a.split('').forEach(l => { const b = q.b[LET.indexOf(l)]; if (b) circle(b.x, b.y, col, false); });
+    if (hasKey && p.k && p.k !== '*' && p.st !== 'ok') { const b = q.b[LET.indexOf(p.k)]; if (b) circle(b.x, b.y, '#1FD16B', true); }
+    if (hasKey && p.st !== 'nokey') {
+      const t = map(q.labelX - L.p * 0.95, q.y), e = map(q.labelX, q.y), fs = Math.max(9, Math.hypot(e.x - t.x, e.y - t.y) * 0.55);
+      o.font = `700 ${fs}px Arial`; o.fillStyle = p.st === 'ok' || p.st === 'bonus' ? '#1FD16B' : p.st === 'blank' ? '#FFB020' : '#FF3B30';
+      o.fillText(p.st === 'ok' || p.st === 'bonus' ? 'c' : p.st === 'blank' ? '–' : 'x', t.x, t.y + fs * 0.35);
+    }
+  });
+  L.id.forEach(pt => { if (r.id[pt.d] === String(pt.v)) circle(pt.x, pt.y, '#2F6FDE', false); });
+}
+
+
 const Cam = {
   stream: null, timer: null, prev: null, stable: 0, waitLost: false, busy: false, auto: true, work: document.createElement('canvas'),
   async start() {
@@ -893,29 +929,36 @@ const Cam = {
   tick() {
     const v = $('#vid'), ov = $('#ov'), ex = curExam();
     if (!v || !ov || !ex || v.readyState < 2 || this.busy) return;
-    const vw = v.videoWidth, vh = v.videoHeight, s = 900 / Math.max(vw, vh);
+    if (S.camResult) { const o = ov.getContext('2d'); o.clearRect(0, 0, ov.width, ov.height); return; }
+    const vw = v.videoWidth, vh = v.videoHeight, s = 1100 / Math.max(vw, vh);
     const w = Math.round(vw * s), h = Math.round(vh * s), c = this.work; c.width = w; c.height = h;
     const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(v, 0, 0, w, h);
     const g = OMR.grayFromRGBA(ctx.getImageData(0, 0, w, h).data, w, h);
-    const loc = OMR.locateAll(g, w, h, layoutOf(ex), ex.sens);
+    const L = layoutOf(ex), loc = OMR.locateAll(g, w, h, L, ex.sens);
     ov.width = w; ov.height = h;
     const o = ov.getContext('2d'); o.clearRect(0, 0, w, h);
     const pill = $('#pill');
-    if (!loc.ok) { this.stable = 0; this.prev = null; this.waitLost = false; if (pill) { pill.textContent = loc.err; pill.className = 'pill'; } return; }
-    loc.sheets.forEach(sh => {
-      const P = sh.corners;
-      o.strokeStyle = '#3DDC84'; o.lineWidth = 4; o.beginPath(); P.forEach((p, i) => i ? o.lineTo(p.x, p.y) : o.moveTo(p.x, p.y)); o.closePath(); o.stroke();
-      P.forEach(p => { o.fillStyle = '#F2BE2C'; o.beginPath(); o.arc(p.x, p.y, 6, 0, 7); o.fill(); });
+    if (!loc.ok) { this.stable = 0; this.prev = null; this.lastSig = null; this.waitLost = false; if (pill) { pill.textContent = loc.err; pill.className = 'pill'; } return; }
+    // Lee cada pregunta en vivo y la dibuja sobre la imagen (como ZipGrade)
+    const reads = loc.sheets.map(sh => {
+      const r = OMR.readMarks({ b: loc.b, map: sh.map }, w, h, L, ex.thr, ex.autoThr !== false);
+      drawLive(o, sh, r, grade(ex, r.answers), L, ex);
+      return r;
     });
+    const sig = reads.map(r => r.answers.join('|') + '#' + r.id).join('/');
+    this.sameRead = sig === this.lastSig ? (this.sameRead || 0) + 1 : 0;
+    this.lastSig = sig;
     const P = loc.sheets.flatMap(sh => sh.corners);
     const same = this.prev && this.prev.length === P.length;
     const move = same ? P.reduce((a, p, i) => a + Math.hypot(p.x - this.prev[i].x, p.y - this.prev[i].y), 0) / P.length / w : 1;
     this.prev = P.map(p => ({ x: p.x, y: p.y }));
-    this.stable = move < 0.012 ? this.stable + 1 : 0;
-    const n = loc.sheets.length, txt = n > 1 ? `${n} cartillas detectadas` : 'Cartilla detectada';
-    if (this.waitLost) { if (pill) { pill.textContent = 'Leída. Pon la siguiente hoja.'; pill.className = 'pill ok'; } return; }
-    if (pill) { pill.textContent = this.stable ? txt + ', quieto…' : txt; pill.className = 'pill ok'; }
-    if (this.auto && this.stable >= 2) this.capture();
+    this.stable = move < 0.03 ? this.stable + 1 : 0;
+    const n = loc.sheets.length;
+    const g0 = grade(ex, reads[0].answers);
+    const txt = n > 1 ? `${n} cartillas: leyendo…` : (ex.key.some(Boolean) ? `${g0.T.c} / ${g0.T.n} correctas` : `${reads[0].answers.filter(Boolean).length} marcadas (sin clave)`);
+    if (pill) { pill.textContent = this.auto ? txt + ' · no muevas la hoja' : txt + ' · toca Capturar'; pill.className = 'pill ok'; }
+    // captura automática: la misma lectura 2 veces seguidas con la hoja quieta
+    if (this.auto && this.sameRead >= 1 && this.stable >= 1) this.capture();
   },
   grab(max) {
     const v = $('#vid'), vw = v.videoWidth, vh = v.videoHeight, s = Math.min(1, max / Math.max(vw, vh));
@@ -934,7 +977,7 @@ const Cam = {
       await new Promise(res => setTimeout(res, 140));
     }
     this.busy = false;
-    if (!frames.length) { handleRead({ ok: false, err: 'La hoja se movió al leer. Mantén quieta la cámara.' }, ex, 'cámara'); return; }
+    if (!frames.length) { toast('La hoja se movió al leer. Mantén quieta la cámara.'); handleRead({ ok: false, err: 'La hoja se movió al leer. Mantén quieta la cámara.' }, ex, 'cámara'); return; }
     const base = frames.reduce((a, f) => f.length > a.length ? f : a, frames[0]);
     const vote = arr => { const c = {}; arr.forEach(a => c[a] = (c[a] || 0) + 1); return Object.entries(c).sort((a, b) => b[1] - a[1])[0]; };
     const sheets = base.map(sh => {
@@ -950,7 +993,7 @@ const Cam = {
       const [id, nid] = vote(reads.map(r => r.id));
       return { ok: true, answers, id, doubts: [...doubts].sort((a, b) => a - b), idDoubt: nid < reads.length || reads.some(x => x.idDoubt), img: sh.img };
     });
-    this.waitLost = true; this.stable = 0; if (navigator.vibrate) navigator.vibrate(60);
+    this.stable = 0; this.sameRead = 0; this.lastSig = null; if (navigator.vibrate) navigator.vibrate(60);
     handleReadAll({ ok: true, sheets }, ex, 'cámara');
   }
 };
@@ -1222,8 +1265,9 @@ function scanView(ex) {
     ${S.scanMode === 'clave' ? `<div class="note">Marca la clave en una hoja impresa de esta evaluación y escanéala: las respuestas pasarán a la clave.</div>` : ''}
     <div class="scan-layout">
       <div>
-        <div class="cam">${Cam.stream ? `<video id="vid" playsinline muted autoplay></video><canvas id="ov"></canvas><span class="pill" id="pill">Buscando los 4 cuadros negros…</span>`
-          : `<div class="cam-idle"><p>Encuadra la hoja completa con sus 4 cuadros negros. La lectura se hace sola cuando la imagen está quieta.</p><button class="btn primary" data-act="camon">Activar cámara</button></div>`}</div>
+        <div class="cam ${S.camResult ? 'has-result' : ''}" id="camBox">${Cam.stream ? `<video id="vid" playsinline muted autoplay></video><canvas id="ov"></canvas><span class="pill" id="pill">Buscando los 4 cuadros negros…</span>`
+          : (S.camResult ? '' : `<div class="cam-idle"><p>Encuadra la hoja completa con sus 4 cuadros negros. Verás en vivo cada pregunta: verde si es correcta, rojo si es incorrecta. La lectura se guarda sola cuando la imagen está quieta.</p><button class="btn primary" data-act="camon">Activar cámara</button></div>`)}
+          ${S.camResult ? camResultView(ex) : ''}</div>
         <div class="row" style="margin-top:12px">
           ${Cam.stream ? `<button class="btn primary" data-act="capture">Capturar ahora</button><button class="btn" data-act="camoff">Detener cámara</button>` : ''}
           <label class="btn">Tomar foto<input type="file" accept="image/*" capture="environment" id="camFile" class="hidden"></label>
@@ -1235,6 +1279,27 @@ function scanView(ex) {
         <div class="panel"><h3>Registro</h3>${S.log.length ? `<ul class="log">${S.log.slice(0, 40).map(l => `<li><span>${esc(l.m || l.e)}</span><span class="${l.e ? 'e' : 'muted'} small">${esc(l.t)}</span></li>`).join('')}</ul>` : `<p class="muted small">Aquí aparece cada hoja leída. Consejos: buena luz, sin sombras sobre la hoja y el papel plano.</p>`}</div>
       </div>
     </div>`;
+}
+
+// Resultado recién leído, como la pantalla de revisión de ZipGrade
+function camResultView(ex) {
+  const ids = S.camResult.filter(id => S.results[id]); if (!ids.length) return '';
+  const i = Math.min(S.camIdx || 0, ids.length - 1), r = S.results[ids[i]], g = grade(ex, r.answers);
+  const hasKey = g.T.n > 0;
+  const nd = (r.doubts || []).length + (r.idDoubt ? 1 : 0);
+  return `<div class="cam-result">
+    <div class="cr-head">
+      ${ids.length > 1 ? `<button class="btn sm" data-act="cridx" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Anterior">‹</button>` : ''}
+      <div class="cr-score">${hasKey ? `${g.T.c} / ${g.T.n} = ${pct(g.T.eff)}` : 'Sin clave'}<small class="${passes(ex, g.T.note) ? 'pass' : 'fail'}">Nota ${fmt(g.T.note)} ${scaleLabel(ex)}</small></div>
+      ${ids.length > 1 ? `<button class="btn sm" data-act="cridx" data-d="1" ${i === ids.length - 1 ? 'disabled' : ''} aria-label="Siguiente">›</button>` : ''}
+    </div>
+    <div class="cr-name">${esc(r.name || 'Sin nombre')} · código ${esc(r.studentId || '—')}${ids.length > 1 ? ` · cartilla ${i + 1} de ${ids.length}` : ''}</div>
+    ${nd ? `<div class="cr-warn">Revisa ${[...(r.doubts || []).map(q => 'P' + (q + 1)), ...(r.idDoubt ? ['el código'] : [])].join(', ')}</div>` : ''}
+    <div class="rev">${r.img ? `<img src="${r.img}" alt="Hoja corregida">${overlaySVG(ex, g, r)}` : ''}</div>
+    <div class="row" style="margin-top:10px;justify-content:center">
+      <button class="btn primary" data-act="crnext">Escanear siguiente</button>
+      <button class="btn" data-act="detail" data-id="${r.id}">Ver preguntas / corregir</button>
+    </div></div>`;
 }
 
 function rowsFor(ex) {
@@ -1412,7 +1477,7 @@ document.addEventListener('click', async e => {
     case 'new': { const n = newExam(false); S.cur = n.id; S.tab = 'config'; render(); break; }
     case 'example': { const n = newExam(true); S.cur = n.id; S.tab = 'config'; render(); toast('Ejemplo creado con clave al azar. Prueba "Escanear" → hoja simulada.'); break; }
     case 'open': S.cur = el.dataset.id; S.tab = 'config'; S.log = []; S.item = null; render(); break;
-    case 'tab': if (el.dataset.tab !== 'scan') Cam.stop(); S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); break;
+    case 'tab': S.camResult = null; if (el.dataset.tab !== 'scan') Cam.stop(); S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); break;
     case 'addsec': {
       const used = ex.sections.reduce((m, s) => Math.max(m, +s.to || 0), 0);
       const from = Math.min(ex.nQ, used + 1), to = Math.min(ex.nQ, from + 4);
@@ -1455,8 +1520,10 @@ document.addEventListener('click', async e => {
     case 'mode': S.scanMode = el.dataset.m; render(); break;
     case 'camon': Cam.start(); break;
     case 'camoff': Cam.stop(); render(); break;
-    case 'capture': Cam.waitLost = false; Cam.capture(); break;
+    case 'capture': S.camResult = null; Cam.capture(); break;
     case 'sim': simulate(); break;
+    case 'crnext': S.camResult = null; Cam.waitLost = false; Cam.sameRead = 0; Cam.lastSig = null; render(); break;
+    case 'cridx': S.camIdx = Math.max(0, (S.camIdx || 0) + +el.dataset.d); render(); break;
     case 'detail': S.detail = el.dataset.id; S.detView = 'img'; render(); break;
     case 'close': S.detail = null; render(); break;
     case 'closebg': S.detail = null; render(); break;
