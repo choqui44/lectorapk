@@ -181,6 +181,10 @@ table.res tbody tr:hover{background:var(--sunk)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--graphite);color:#fff;padding:10px 18px;border-radius:999px;z-index:80;font-weight:700;box-shadow:0 8px 20px rgba(0,0,0,.25);max-width:90vw;text-align:center}
 .hidden{display:none!important}
 #printArea{display:none}
+.auth-wrap{min-height:calc(100vh - 40px);display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.auth-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--pencil);border-radius:var(--radius-m);padding:26px 22px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
+.auth-err{min-height:22px;color:var(--bad);font-weight:700;font-size:.9rem;margin:10px 0 4px}
+main .auth-wrap{min-height:auto}
 .cam.has-result{display:block;background:var(--surface);border:1px solid var(--line)}
 .cam.has-result video,.cam.has-result canvas,.cam.has-result .pill{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .cam-result{padding:12px}
@@ -1202,6 +1206,199 @@ function buildReport(D) {
   Dh.landscape = false;
   return B.build({ title: `Resultados — ${D.exam}` });
 }
+/* ===== Acceso: usuarios, contraseñas cifradas (PBKDF2) y roles ===== */
+const Auth = (() => {
+  const LS_USERS = 'lc_users_v1', SS_SESSION = 'lc_session_v1', LS_LOCK = 'lc_lock_v1';
+  const ITER = 150000, IDLE_MIN = 30;
+  let db = null;            // { updated, users: [...] }
+  let remoteUpdated = 0;    // fecha del usuarios.json publicado (0 si no hay)
+  let session = null;       // { u, role, name, mustChange }
+  let lastActivity = Date.now();
+
+  const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  async function hash(password, saltB64) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: unb64(saltB64), iterations: ITER, hash: 'SHA-256' }, key, 256);
+    return b64(bits);
+  }
+  const newSalt = () => b64(crypto.getRandomValues(new Uint8Array(16)));
+  const norm = u => String(u || '').trim().toLowerCase();
+
+  function saveLocal() { try { localStorage.setItem(LS_USERS, JSON.stringify(db)); } catch (e) { } }
+  async function makeUser(u, name, role, password, mustChange) {
+    const salt = newSalt();
+    return { u: norm(u), name: name || u, role, salt, hash: await hash(password, salt), active: true, mustChange: !!mustChange, created: Date.now(), pwAt: Date.now() };
+  }
+
+  async function init() {
+    let local = null, remote = null;
+    try { local = JSON.parse(localStorage.getItem(LS_USERS) || 'null'); } catch (e) { }
+    // En GitHub Pages: usuarios.json publicado junto a index.html
+    try {
+      if (location.protocol.startsWith('http')) {
+        const r = await fetch('usuarios.json?v=' + Date.now(), { cache: 'no-store' });
+        if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.users)) remote = j; }
+      }
+    } catch (e) { }
+    remoteUpdated = remote ? remote.updated || 0 : 0;
+    const both = [local, remote].filter(Boolean).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    db = both[0] ? JSON.parse(JSON.stringify(both[0])) : null;
+    // la contraseña más reciente de cada usuario gana (así un tutor conserva la clave que cambió en su equipo)
+    if (db && both[1]) db.users.forEach(x => { const o = both[1].users.find(y => y.u === x.u); if (o && (o.pwAt || 0) > (x.pwAt || 0)) Object.assign(x, { salt: o.salt, hash: o.hash, mustChange: o.mustChange, pwAt: o.pwAt }); });
+    if (!db || !db.users.some(x => x.role === 'admin' && x.active)) {
+      db = { updated: 0, users: [await makeUser('administrador', 'Administrador', 'admin', '123456', true)] };
+    }
+    saveLocal();
+    try { const s = JSON.parse(sessionStorage.getItem(SS_SESSION) || 'null'); if (s && s.exp > Date.now() && db.users.some(x => x.u === s.u && x.active)) session = s; } catch (e) { }
+    ['pointerdown', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { lastActivity = Date.now(); if (session) touch(); }, { passive: true }));
+    setInterval(() => { if (session && Date.now() - lastActivity > IDLE_MIN * 60000) { logout(); toast('Sesión cerrada por inactividad.'); } }, 30000);
+  }
+  function touch() { session.exp = Date.now() + IDLE_MIN * 60000; try { sessionStorage.setItem(SS_SESSION, JSON.stringify(session)); } catch (e) { } }
+
+  function lockInfo() { try { return JSON.parse(localStorage.getItem(LS_LOCK) || '{"n":0,"until":0}'); } catch (e) { return { n: 0, until: 0 }; } }
+  async function login(u, p) {
+    const lk = lockInfo();
+    if (lk.until > Date.now()) return { ok: false, err: `Demasiados intentos. Espera ${Math.ceil((lk.until - Date.now()) / 1000)} segundos.` };
+    const user = db.users.find(x => x.u === norm(u));
+    const ok = user && user.active && (await hash(p, user.salt)) === user.hash;
+    if (!ok) {
+      lk.n++; if (lk.n >= 5) { lk.until = Date.now() + 60000 * Math.min(10, lk.n - 4); }
+      try { localStorage.setItem(LS_LOCK, JSON.stringify(lk)); } catch (e) { }
+      return { ok: false, err: user && !user.active ? 'Este usuario está bloqueado. Consulta con el administrador.' : 'Usuario o contraseña incorrectos.' };
+    }
+    try { localStorage.setItem(LS_LOCK, JSON.stringify({ n: 0, until: 0 })); } catch (e) { }
+    session = { u: user.u, role: user.role, name: user.name, mustChange: !!user.mustChange };
+    lastActivity = Date.now(); touch();
+    return { ok: true };
+  }
+  function logout() { session = null; try { sessionStorage.removeItem(SS_SESSION); } catch (e) { } if (typeof Cam !== 'undefined') Cam.stop(); render(); }
+
+  function checkPw(p) {
+    if (p.length < 8) return 'Usa al menos 8 caracteres.';
+    if (!/[A-Za-zÁÉÍÓÚáéíóúñÑ]/.test(p) || !/\d/.test(p)) return 'Combina letras y números.';
+    if (/^(12345678|password|contraseña|administrador)/i.test(p)) return 'Esa contraseña es muy fácil de adivinar.';
+    return null;
+  }
+  async function changeOwn(current, next) {
+    const user = db.users.find(x => x.u === session.u);
+    if (!user || (await hash(current, user.salt)) !== user.hash) return 'La contraseña actual no es correcta.';
+    const e = checkPw(next); if (e) return e;
+    user.salt = newSalt(); user.hash = await hash(next, user.salt); user.mustChange = false; user.pwAt = Date.now();
+    session.mustChange = false; touch(); if (isAdmin()) commit(); else saveLocal();
+    return null;
+  }
+  function commit() { db.updated = Date.now(); saveLocal(); }
+
+  // Administración (solo administradores)
+  const isAdmin = () => session && session.role === 'admin';
+  async function createUser(u, name, role, password) {
+    if (!isAdmin()) return 'Sin permiso.';
+    u = norm(u);
+    if (!/^[a-z0-9._-]{3,30}$/.test(u)) return 'El usuario debe tener de 3 a 30 caracteres: letras, números, punto o guion.';
+    if (db.users.some(x => x.u === u)) return 'Ese usuario ya existe.';
+    const e = checkPw(password); if (e) return e;
+    db.users.push(await makeUser(u, name.trim() || u, role, password, true)); commit(); return null;
+  }
+  async function resetPw(u, password) {
+    if (!isAdmin()) return 'Sin permiso.';
+    const e = checkPw(password); if (e) return e;
+    const user = db.users.find(x => x.u === u); if (!user) return 'No existe.';
+    user.salt = newSalt(); user.hash = await hash(password, user.salt); user.mustChange = true; user.pwAt = Date.now(); commit(); return null;
+  }
+  function activeAdmins() { return db.users.filter(x => x.role === 'admin' && x.active).length; }
+  function toggle(u) {
+    const user = db.users.find(x => x.u === u); if (!user || !isAdmin()) return 'Sin permiso.';
+    if (user.u === session.u) return 'No puedes bloquear tu propia cuenta.';
+    if (user.active && user.role === 'admin' && activeAdmins() <= 1) return 'Debe quedar al menos un administrador activo.';
+    user.active = !user.active; commit(); return null;
+  }
+  function remove(u) {
+    const user = db.users.find(x => x.u === u); if (!user || !isAdmin()) return 'Sin permiso.';
+    if (user.u === session.u) return 'No puedes eliminar tu propia cuenta.';
+    if (user.role === 'admin' && activeAdmins() <= 1) return 'Debe quedar al menos un administrador activo.';
+    db.users = db.users.filter(x => x.u !== u); commit(); return null;
+  }
+  function setRole(u, role) {
+    const user = db.users.find(x => x.u === u); if (!user || !isAdmin()) return 'Sin permiso.';
+    if (user.u === session.u) return 'No puedes cambiar tu propio rol.';
+    if (user.role === 'admin' && role !== 'admin' && activeAdmins() <= 1) return 'Debe quedar al menos un administrador activo.';
+    user.role = role; commit(); return null;
+  }
+  const exportJson = () => JSON.stringify({ app: 'lector-cartillas', updated: db.updated || Date.now(), users: db.users }, null, 2);
+  const pending = () => location.protocol.startsWith('http') && (db.updated || 0) > remoteUpdated;
+  const isDefault = () => db.users.length === 1 && db.users[0].u === 'administrador' && db.users[0].mustChange;
+
+  return {
+    init, login, logout, changeOwn, createUser, resetPw, toggle, remove, setRole, exportJson, pending, isDefault, isAdmin, checkPw,
+    get session() { return session; }, get users() { return db ? db.users : []; }, get published() { return remoteUpdated > 0; }
+  };
+})();
+
+/* ---------- Vistas de acceso ---------- */
+function loginView() {
+  return `<div class="auth-wrap"><div class="auth-card">
+    <div class="brand" style="color:var(--ink);justify-content:center"><span class="brand-dot"></span>Lector de cartillas</div>
+    <p class="muted small" style="text-align:center;margin:6px 0 18px">Ingresa con tu usuario y contraseña.</p>
+    <label class="f">Usuario<input type="text" id="lgUser" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+    <label class="f" style="margin-top:10px">Contraseña<input type="password" id="lgPass" autocomplete="current-password"></label>
+    <div id="lgErr" class="auth-err" role="alert">${esc(S.authErr || '')}</div>
+    <button class="btn primary" data-act="login" style="width:100%;margin-top:6px">Ingresar</button>
+    <p class="muted small" style="text-align:center;margin:14px 0 0">¿Olvidaste tu contraseña? Pide al administrador que la restablezca.</p>
+  </div></div>`;
+}
+function changePwView(forced) {
+  return `<div class="auth-wrap"><div class="auth-card">
+    <h2 style="text-align:center">${forced ? 'Crea tu contraseña' : 'Cambiar contraseña'}</h2>
+    <p class="muted small" style="text-align:center;margin:6px 0 16px">${forced ? 'Por seguridad, cambia la contraseña temporal antes de continuar.' : 'Hola, ' + esc(Auth.session.name) + '.'} Usa al menos 8 caracteres combinando letras y números.</p>
+    <label class="f">Contraseña actual<input type="password" id="pwCur" autocomplete="current-password"></label>
+    <label class="f" style="margin-top:10px">Nueva contraseña<input type="password" id="pwNew" autocomplete="new-password"></label>
+    <label class="f" style="margin-top:10px">Repite la nueva contraseña<input type="password" id="pwNew2" autocomplete="new-password"></label>
+    <div class="auth-err" role="alert">${esc(S.authErr || '')}</div>
+    <button class="btn primary" data-act="savepw" style="width:100%;margin-top:6px">Guardar contraseña</button>
+    ${forced ? `<button class="btn ghost" data-act="logout" style="width:100%;margin-top:6px">Salir</button>` : `<button class="btn ghost" data-act="page" data-p="" style="width:100%;margin-top:6px">Cancelar</button>`}
+  </div></div>`;
+}
+function usersView() {
+  const me = Auth.session.u;
+  const rows = Auth.users.slice().sort((a, b) => (a.role === b.role ? a.u.localeCompare(b.u) : a.role === 'admin' ? -1 : 1)).map(x => `<tr>
+    <td><b>${esc(x.name)}</b><br><span class="small muted">${esc(x.u)}${x.u === me ? ' · tú' : ''}</span></td>
+    <td><select data-role="${esc(x.u)}" ${x.u === me ? 'disabled' : ''} aria-label="Rol de ${esc(x.u)}" style="width:auto"><option value="tutor" ${x.role === 'tutor' ? 'selected' : ''}>Tutor</option><option value="admin" ${x.role === 'admin' ? 'selected' : ''}>Administrador</option></select></td>
+    <td>${x.active ? '<span class="st ok">Activo</span>' : '<span class="st bad">Bloqueado</span>'}${x.mustChange ? ' <span class="st warn">clave temporal</span>' : ''}</td>
+    <td class="row" style="gap:6px">${x.u === me ? '<button class="btn sm" data-act="page" data-p="password">Mi contraseña</button>' : `
+      <button class="btn sm" data-act="ureset" data-u="${esc(x.u)}">Restablecer clave</button>
+      <button class="btn sm" data-act="utoggle" data-u="${esc(x.u)}">${x.active ? 'Bloquear' : 'Activar'}</button>
+      <button class="btn sm danger" data-act="udel" data-u="${esc(x.u)}">Eliminar</button>`}</td></tr>`).join('');
+  const http = location.protocol.startsWith('http');
+  return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><h2>Usuarios</h2><button class="btn" data-act="page" data-p="">‹ Volver</button></div>
+    ${Auth.pending() ? `<div class="note bad"><b>Hay cambios sin publicar.</b> Los tutores no los verán hasta que subas el nuevo <code>usuarios.json</code> a GitHub.</div>` : ''}
+    <div class="panel"><h3>Crear usuario</h3>
+      <p class="muted small">El tutor entrará con una contraseña temporal y el programa le pedirá cambiarla la primera vez.</p>
+      <div class="grid-fields">
+        <label class="f">Nombre del tutor<input type="text" id="nuName" placeholder="Ej. Rosa Huamán"></label>
+        <label class="f">Usuario<input type="text" id="nuUser" placeholder="Ej. rhuaman" autocapitalize="none" spellcheck="false"></label>
+        <label class="f">Contraseña temporal<input type="text" id="nuPass" placeholder="8+ caracteres, letras y números"></label>
+        <label class="f">Rol<select id="nuRole"><option value="tutor">Tutor</option><option value="admin">Administrador</option></select></label>
+      </div>
+      <div class="auth-err">${esc(S.authErr || '')}</div>
+      <button class="btn primary" data-act="ucreate">Crear usuario</button>
+    </div>
+    <div class="panel"><h3>Cuentas</h3>
+      <div class="scroll-x"><table class="res" style="margin-top:8px"><thead><tr><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted small">Tutor: crea evaluaciones, escanea y ve resultados. No puede eliminar evaluaciones ni administrar usuarios. Administrador: acceso completo.</p>
+    </div>
+    <div class="panel"><h3>Publicar usuarios en GitHub</h3>
+      <p class="small">Las cuentas se guardan en un archivo <code>usuarios.json</code> junto a <code>index.html</code>. Cada vez que crees, bloquees o cambies una cuenta:</p>
+      <ol class="small" style="padding-left:20px;margin:6px 0 12px">
+        <li>Toca <b>Descargar usuarios.json</b>.</li>
+        <li>En tu repositorio de GitHub, entra a la carpeta donde está <code>index.html</code> y elige <b>Add file › Upload files</b>.</li>
+        <li>Sube el archivo (reemplaza el anterior) y confirma con <b>Commit changes</b>. En uno o dos minutos los tutores ya pueden ingresar.</li>
+      </ol>
+      <button class="btn primary" data-act="uexport">Descargar usuarios.json</button>
+      ${http ? (Auth.published ? '' : `<p class="small" style="color:var(--warn);font-weight:700">Todavía no hay un usuarios.json publicado en este sitio.</p>`) : `<p class="small muted">Estás usando el programa fuera de GitHub: aquí las cuentas solo existen en este navegador.</p>`}
+      <p class="muted small" style="margin-bottom:0">El archivo guarda las contraseñas cifradas, nunca en texto visible. Aun así, usa contraseñas largas: si alguien descarga el archivo, las contraseñas cortas se pueden adivinar por fuerza bruta.</p>
+    </div>`;
+}
 /* ===== Utilidades ===== */
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1213,7 +1410,7 @@ const COLORS = ['#2F6FDE', '#1C8A4B', '#C2410C', '#8E44AD', '#0E8C8C', '#B8860B'
 const GEN = { id: '_gen', name: 'Sin curso', pts: 1, wrong: 0, blank: 0, color: '#8A939B' };
 const heat = p => `hsl(${Math.round(p * 130)} ${p > .5 ? 50 : 62}% ${p > .6 ? 36 : 45}%)`;
 
-const S = { exams: {}, results: {}, cur: null, tab: 'config', scanMode: 'alumnos', sort: { k: 'nota', d: -1 }, q: '', item: null, detail: null, detView: 'img', synced: false, log: [], last: null };
+const S = { page: '', authErr: '', exams: {}, results: {}, cur: null, tab: 'config', scanMode: 'alumnos', sort: { k: 'nota', d: -1 }, q: '', item: null, detail: null, detView: 'img', synced: false, log: [], last: null };
 
 function toast(msg) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
@@ -1635,6 +1832,10 @@ function render() {
   if (!ex) { Cam.stop(); S.cur = null; }
   const keepScroll = window.scrollY;
   const focusId = document.activeElement && document.activeElement.id;
+  if (!Auth.session) { Cam.stop(); app.innerHTML = loginView(); const u = $('#lgUser'); if (u && !focusId) u.focus(); return; }
+  if (Auth.session.mustChange) { app.innerHTML = changePwView(true); return; }
+  if (S.page === 'password') { app.innerHTML = topBar(null) + `<main><div class="wrap">${changePwView(false)}</div></main>`; return; }
+  if (S.page === 'users' && Auth.isAdmin()) { Cam.stop(); app.innerHTML = topBar(null) + `<main><div class="wrap">${usersView()}</div></main>`; return; }
   app.innerHTML = topBar(ex) + `<main><div class="wrap">${ex ? examView(ex) : homeView()}</div></main>` + (S.detail && S.results[S.detail] ? detailView() : '');
   if (ex && S.tab === 'scan' && Cam.stream) { const v = $('#vid'); if (v) { v.srcObject = Cam.stream; v.play().catch(() => { }); } }
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
@@ -1650,7 +1851,10 @@ const ICONS = {
   movil: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/>',
   pc: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>'
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.2a5 5 0 0 1 5.5 5.3"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/>',
+  logout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/>'
 };
 const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 const isDark = () => S.theme ? S.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -1661,9 +1865,12 @@ function topBar(ex) {
   const tools = `<div class="tools">
       <button class="icon-btn" data-act="view" title="Cambiar a formato ${nextView === 'pc' ? 'PC' : 'celular'}" aria-label="Cambiar a formato ${nextView === 'pc' ? 'PC' : 'celular'}">${icon(nextView)}<span>${nextView === 'pc' ? 'Formato PC' : 'Formato celular'}</span></button>
       <button class="icon-btn" data-act="theme" title="Cambiar a tema ${isDark() ? 'claro' : 'oscuro'}" aria-label="Cambiar a tema ${isDark() ? 'claro' : 'oscuro'}">${icon(isDark() ? 'sun' : 'moon')}<span>${isDark() ? 'Tema claro' : 'Tema oscuro'}</span></button>
+      ${Auth.isAdmin() ? `<button class="icon-btn" data-act="page" data-p="users" title="Administrar usuarios" aria-label="Administrar usuarios">${icon('users')}<span>Usuarios${Auth.pending() ? ' •' : ''}</span></button>` : ''}
+      <button class="icon-btn" data-act="page" data-p="password" title="Cambiar mi contraseña (${esc(Auth.session.name)})" aria-label="Cambiar mi contraseña">${icon('key')}<span>${esc(Auth.session.name.split(' ')[0])}</span></button>
+      <button class="icon-btn" data-act="logout" title="Cerrar sesión" aria-label="Cerrar sesión">${icon('logout')}<span>Salir</span></button>
     </div>`;
   return `<header class="top"><div class="wrap">
-    ${ex ? `<button class="crumb" data-act="home" aria-label="Volver a evaluaciones">‹ ${S.view === 'movil' ? '' : 'Evaluaciones'}</button><div class="title">${esc(ex.name)}</div>`
+    ${S.page ? `<button class="crumb" data-act="page" data-p="" aria-label="Volver">‹ ${S.view === 'movil' ? '' : 'Volver'}</button><div class="title">${S.page === 'users' ? 'Usuarios' : 'Mi contraseña'}</div>` : ex ? `<button class="crumb" data-act="home" aria-label="Volver a evaluaciones">‹ ${S.view === 'movil' ? '' : 'Evaluaciones'}</button><div class="title">${esc(ex.name)}</div>`
       : `<div class="brand"><span class="brand-dot"></span>Lector de cartillas</div><div class="title"></div>`}
     <span class="sync">${S.synced ? 'Guardado en tu cuenta' : 'Guardado en este navegador'}</span>
     ${tools}
@@ -1795,7 +2002,7 @@ function configView(ex) {
     </div>
     <p class="muted small">Baja el relleno mínimo si el lápiz es tenue; súbelo si los borrones cuentan como marca.</p>
   </div>
-  <div class="row"><button class="btn danger" data-act="delexam">Eliminar evaluación</button></div>`;
+  ${Auth.isAdmin() ? `<div class="row"><button class="btn danger" data-act="delexam">Eliminar evaluación</button></div>` : ''}`;
 }
 
 function sheetView(ex) {
@@ -2067,6 +2274,29 @@ document.addEventListener('click', async e => {
   const act = el.dataset.act, ex = curExam();
   if (act === 'closebg' && e.target !== el) return;
   switch (act) {
+    case 'login': return doLogin();
+    case 'logout': S.page = ''; S.cur = null; S.detail = null; Auth.logout(); break;
+    case 'page': S.authErr = ''; S.page = el.dataset.p; if (S.page) { Cam.stop(); S.detail = null; } render(); window.scrollTo(0, 0); break;
+    case 'savepw': {
+      const cur = $('#pwCur').value, n1 = $('#pwNew').value, n2 = $('#pwNew2').value;
+      if (n1 !== n2) { S.authErr = 'Las contraseñas nuevas no coinciden.'; render(); break; }
+      const err = await Auth.changeOwn(cur, n1);
+      S.authErr = err || ''; if (!err) { S.page = ''; toast(Auth.isAdmin() && Auth.pending() ? 'Contraseña cambiada. Publica usuarios.json para que valga en GitHub.' : 'Contraseña cambiada.'); }
+      render(); break;
+    }
+    case 'ucreate': {
+      const err = await Auth.createUser($('#nuUser').value, $('#nuName').value, $('#nuRole').value, $('#nuPass').value);
+      S.authErr = err || ''; if (!err) toast('Usuario creado. Descarga y publica usuarios.json.');
+      render(); break;
+    }
+    case 'ureset': {
+      const p = prompt(`Nueva contraseña temporal para "${el.dataset.u}" (8+ caracteres, letras y números):`);
+      if (p === null) break;
+      const err = await Auth.resetPw(el.dataset.u, p); toast(err || 'Contraseña restablecida. Publica usuarios.json.'); render(); break;
+    }
+    case 'utoggle': { const err = Auth.toggle(el.dataset.u); if (err) toast(err); render(); break; }
+    case 'udel': if (confirm(`¿Eliminar la cuenta "${el.dataset.u}"? Sus datos de evaluaciones en su navegador no se borran.`)) { const err = Auth.remove(el.dataset.u); if (err) toast(err); render(); } break;
+    case 'uexport': saveFile('usuarios.json', Auth.exportJson()); break;
     case 'home': Cam.stop(); S.cur = null; S.detail = null; render(); break;
     case 'new': { const n = newExam(false); S.cur = n.id; S.tab = 'config'; render(); break; }
     case 'example': { const n = newExam(true); S.cur = n.id; S.tab = 'config'; render(); toast('Ejemplo creado con clave al azar. Prueba "Escanear" → hoja simulada.'); break; }
@@ -2093,6 +2323,7 @@ document.addEventListener('click', async e => {
     }
     case 'clearkey': if (confirm('¿Borrar toda la clave?')) { ex.key = Array(ex.nQ).fill(''); Store.put('exam', ex); render(); } break;
     case 'delexam':
+      if (!Auth.isAdmin()) { toast('Solo el administrador puede eliminar evaluaciones.'); break; }
       if (confirm(`¿Eliminar "${ex.name}" y todas sus hojas escaneadas?`)) {
         examResults(ex).forEach(r => { delete S.results[r.id]; Store.del('res', r.id); });
         delete S.exams[ex.id]; Store.del('exam', ex.id); S.cur = null; render();
@@ -2156,6 +2387,7 @@ const slug = s => (s || 'evaluacion').toLowerCase().normalize('NFD').replace(/[\
 
 document.addEventListener('change', async e => {
   const t = e.target, ex = curExam();
+  if (t.dataset.role) { const err = Auth.setRole(t.dataset.role, t.value); if (err) toast(err); render(); return; }
   if (t.id === 'autoCap') { Cam.auto = t.checked; return; }
   if (t.id === 'sortSel') { const k = t.value; S.sort = { k, d: (k === 'name' || k === 'id') ? 1 : -1 }; render(); return; }
   if (t.id === 'perPage') { ex.perPage = +t.value; Store.put('exam', ex); render(); return; }
@@ -2200,7 +2432,21 @@ document.addEventListener('input', e => {
   if (t.id === 'exThr') $('#thrV').textContent = Math.round(t.value * 100) + '%';
   if (t.id === 'exSens') $('#sensV').textContent = Math.round(t.value * 100);
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.detail) { S.detail = null; render(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && S.detail) { S.detail = null; render(); }
+  if (e.key === 'Enter' && !Auth.session && (e.target.id === 'lgUser' || e.target.id === 'lgPass')) { e.preventDefault(); if (e.target.id === 'lgUser') $('#lgPass').focus(); else doLogin(); }
+  if (e.key === 'Enter' && ['pwCur', 'pwNew', 'pwNew2'].includes(e.target.id)) { e.preventDefault(); const b = document.querySelector('[data-act=savepw]'); if (b) b.click(); }
+});
+async function doLogin() {
+  const u = $('#lgUser'), p = $('#lgPass'), btn = document.querySelector('[data-act=login]');
+  if (!u || !p) return;
+  if (!u.value.trim() || !p.value) { S.authErr = 'Escribe tu usuario y contraseña.'; $('#lgErr').textContent = S.authErr; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
+  const r = await Auth.login(u.value, p.value);
+  S.authErr = r.ok ? '' : r.err;
+  if (!r.ok) { const user = u.value; render(); const nu = $('#lgUser'); if (nu) { nu.value = user; $('#lgPass').focus(); } return; }
+  S.page = ''; S.cur = null; render();
+}
 
 /* ===== Inicio ===== */
 S.view = Prefs.get('view', matchMedia('(max-width: 760px)').matches ? 'movil' : 'pc');
@@ -2208,7 +2454,8 @@ S.theme = Prefs.get('theme', '');
 applyPrefs();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!S.theme) { applyPrefs(); render(); } });
 Store.loadLocal();
-render();
+$('#app').innerHTML = '<div class="auth-wrap"><p class="muted">Cargando…</p></div>';
+Auth.init().then(() => render()).catch(err => { console.error(err); $('#app').innerHTML = '<div class="auth-wrap"><div class="auth-card"><h2>No se pudo iniciar</h2><p class="muted">Este navegador no permite el cifrado necesario. Abre el programa desde su enlace https (GitHub Pages) con un navegador actualizado.</p></div></div>'; });
 Store.connect();
 dl();
 </script></body></html>
