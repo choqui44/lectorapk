@@ -181,6 +181,24 @@ table.res tbody tr:hover{background:var(--sunk)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--graphite);color:#fff;padding:10px 18px;border-radius:999px;z-index:80;font-weight:700;box-shadow:0 8px 20px rgba(0,0,0,.25);max-width:90vw;text-align:center}
 .hidden{display:none!important}
 #printArea{display:none}
+.type-badge{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.02em;padding:2px 9px;border-radius:999px;background:var(--sunk);color:var(--muted);border:1px solid var(--line);align-self:flex-start;font-family:var(--body)}
+.type-badge.uni{background:var(--pencil);color:var(--pencil-ink);border-color:var(--pencil)}
+.exam-card.uni{border-top:4px solid var(--pencil)}
+.uni-dots{display:flex;gap:6px;flex-wrap:wrap}
+.uni-dots span{font-size:.78rem;font-weight:700;padding:2px 8px;border-radius:6px;color:#fff;background:var(--c)}
+.choose-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:10px}
+.choose-card{text-align:left;display:flex;flex-direction:column;gap:6px;padding:16px;border-radius:var(--radius-m);border:2px solid var(--line);background:var(--sunk);cursor:pointer;color:var(--ink)}
+.choose-card b{font-family:var(--display);font-size:1.35rem}
+.choose-card span{font-size:.9rem;color:var(--muted)}
+.choose-card:hover{border-color:var(--ink)}
+.choose-card.uni{border-color:var(--pencil)}
+.uni-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:18px}
+.uni-card{background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--c);border-radius:var(--radius-m);padding:16px;display:flex;flex-direction:column;gap:8px;position:relative}
+.uni-num{position:absolute;top:10px;right:14px;font-family:var(--display);font-weight:700;font-size:2rem;color:var(--c);opacity:.9}
+.uni-name{font-family:var(--display);font-weight:700;font-size:1.25rem !important;background:transparent !important;border-color:transparent !important;padding:4px 6px !important;margin-left:-6px;width:calc(100% - 50px) !important}
+.uni-name:hover,.uni-name:focus{border-color:var(--line) !important;background:var(--sunk) !important}
+.uni-card .stats{display:flex;gap:16px;font-size:.9rem;color:var(--muted)}
+.uni-card .stats b{font-family:var(--display);font-size:1.3rem;color:var(--ink);display:block;line-height:1}
 .auth-wrap{min-height:calc(100vh - 40px);display:flex;align-items:center;justify-content:center;padding:24px 16px}
 .auth-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--pencil);border-radius:var(--radius-m);padding:26px 22px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
 .auth-err{min-height:22px;color:var(--bad);font-weight:700;font-size:.9rem;margin:10px 0 4px}
@@ -878,9 +896,12 @@ ${ctOver.join('')}</Types>`],
   return { Book, colL, ref, absRef, sheetRef };
 })();
 /* ===== Reporte Excel del salón: Dashboard, Por curso, Por estudiante ===== */
-function buildReport(D) {
+function buildReport(D, opts = {}) {
   const { colL, ref, absRef, sheetRef } = XL;
-  const B = new XL.Book();
+  const B = opts.book || new XL.Book();
+  const pre = opts.prefix || '', NE = pre + 'Por estudiante', NP = pre + 'Por curso', ND = pre + 'Dashboard';
+  const q = n => `'${n.replace(/'/g, "''")}'`;
+  const startLen = B.sheets.length;
   const C = { ink: '23272B', muted: '6B737B', line: 'DDE2DF', soft: 'F5F7F6', yellow: 'F2BE2C', ok: '1C8A4B', bad: 'CC3A2A', white: 'FFFFFF', blue: '1F4FBF' };
   const LV = [
     { k: 'AD', name: 'Logro destacado', range: '18 – 20', color: '1C8A4B', test: n => n >= 18 },
@@ -906,8 +927,8 @@ function buildReport(D) {
   const tdC = (num, extra = {}) => td({ ...extra, num, align: { h: 'center' } });
 
   /* ======================= Hoja 3: Por estudiante (datos base) ======================= */
-  const E = B.sheet('Por estudiante');
-  E.tab = '2F6FDE';
+  const E = B.sheet(NE);
+  E.tab = opts.tab || '2F6FDE';
   const baseCols = ['Puesto', 'Código', 'Estudiante', 'Nota (0-20)', 'Nivel', 'Estado', 'Puntaje', 'Puntaje máximo', 'Correctas', 'Incorrectas', 'En blanco', 'Eficiencia'];
   const secFields = ['Puntaje', 'Correctas', 'Incorrectas', 'En blanco', 'Eficiencia', 'Nota (0-20)'];
   const c0 = 1; // columna B
@@ -915,9 +936,9 @@ function buildReport(D) {
   const secCol = (j, f) => c0 + baseCols.length + j * secFields.length + secFields.indexOf(f);
   const lastCol = c0 + baseCols.length + secs.length * secFields.length - 1;
   const HR = 13 + secs.length, R0 = HR + 1, R1 = R0 + Math.max(N, 1) - 1; // encabezado (índice 13 = fila 14) y datos
-  const rng = c => `'Por estudiante'!${absRef(R0, c)}:${absRef(R1, c)}`;
+  const rng = c => `${q(NE)}!${absRef(R0, c)}:${absRef(R1, c)}`;
   const localRng = c => `${absRef(R0, c)}:${absRef(R1, c)}`;
-  const PASS = `Dashboard!$M$3`;
+  const PASS = `${q(ND)}!$M$3`;
 
   E.merge(0, 1, 0, lastCol, `Resultados por estudiante — ${D.exam}`, title); E.height(0, 34);
   E.merge(1, 1, 1, lastCol, `${N} estudiantes · ${D.nQ} preguntas · ${secs.length} cursos · Nota en escala vigesimal (0 a 20) · ${D.date}`, subtitle); E.height(1, 20);
@@ -973,8 +994,8 @@ function buildReport(D) {
     E.set(r, col['Puesto'], i + 1, tdC('0'), `RANK(${R(col['Nota (0-20)'])},${localRng(col['Nota (0-20)'])})`);
     E.set(r, col['Código'], s.code, tdC());
     E.set(r, col['Estudiante'], s.display, td({ font: { b: true } }));
-    E.set(r, col['Puntaje'], s.score, tdC('0.##'), secs.length ? secs.map((_, j) => R(secCol(j, 'Puntaje'))).join('+') : null);
-    E.set(r, col['Puntaje máximo'], s.max, tdC('0.##'));
+    E.set(r, col['Puntaje'], s.score, tdC('General'), secs.length ? secs.map((_, j) => R(secCol(j, 'Puntaje'))).join('+') : null);
+    E.set(r, col['Puntaje máximo'], s.max, tdC('General'));
     E.set(r, col['Nota (0-20)'], s.nota, tdC('0.0', { font: { b: true } }), `IF(${R(col['Puntaje máximo'])}>0,MAX(0,${R(col['Puntaje'])})/${R(col['Puntaje máximo'])}*20,0)`);
     E.set(r, col['Nivel'], lvlOf(s.nota), tdC(), lvlF(R(col['Nota (0-20)'])));
     E.set(r, col['Estado'], s.nota >= pass ? 'Aprobado' : 'Desaprobado', tdC(), `IF(${R(col['Nota (0-20)'])}>=${PASS},"Aprobado","Desaprobado")`);
@@ -982,7 +1003,7 @@ function buildReport(D) {
     E.set(r, col['Eficiencia'], s.eff, tdC('0%'), `IFERROR(${R(col['Correctas'])}/(${R(col['Correctas'])}+${R(col['Incorrectas'])}+${R(col['En blanco'])}),0)`);
     secs.forEach((sc, j) => {
       const x = s.secs[j], P = f => R(secCol(j, f));
-      E.set(r, secCol(j, 'Puntaje'), x.score, tdC('0.##'));
+      E.set(r, secCol(j, 'Puntaje'), x.score, tdC('General'));
       E.set(r, secCol(j, 'Correctas'), x.c, tdC('0'));
       E.set(r, secCol(j, 'Incorrectas'), x.w, tdC('0'));
       E.set(r, secCol(j, 'En blanco'), x.b, tdC('0'));
@@ -991,7 +1012,7 @@ function buildReport(D) {
     });
   });
   if (N) {
-    E.table({ name: 'TablaEstudiantes', r1: HR, c1: c0, r2: R1, c2: lastCol, columns: uniq, style: 'TableStyleLight15' });
+    E.table({ name: 'TablaEstudiantes' + (opts.tableSuffix || ''), r1: HR, c1: c0, r2: R1, c2: lastCol, columns: uniq, style: 'TableStyleLight15' });
     E.colorScale(localRng(col['Nota (0-20)']).replace(/\$/g, ''), [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]);
     E.dataBar(localRng(col['Eficiencia']).replace(/\$/g, ''), '2F6FDE');
     secs.forEach((sc, j) => { E.colorScale(localRng(secCol(j, 'Nota (0-20)')).replace(/\$/g, ''), [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']]); E.dataBar(localRng(secCol(j, 'Eficiencia')).replace(/\$/g, ''), sc.color); });
@@ -1002,12 +1023,12 @@ function buildReport(D) {
   E.freeze = { r: HR + 1, c: col['Estudiante'] + 1 };
   E.width(0, 2); baseCols.forEach((h, i) => E.width(c0 + i, h === 'Estudiante' ? 30 : h === 'Estado' ? 14 : 11));
   secs.forEach((_, j) => secFields.forEach(f => E.width(secCol(j, f), 11)));
-  E.merge(R1 + 2, 1, R1 + 3, 12, `Nivel: AD logro destacado (18-20), A logro esperado (14-17), B en proceso (11-13), C en inicio (0-10). Eficiencia = correctas ÷ preguntas calificadas. La nota aprobatoria se cambia en la hoja Dashboard (celda M3).`, expl);
+  E.merge(R1 + 2, 1, R1 + 3, 12, `Nivel: AD logro destacado (18-20), A logro esperado (14-17), B en proceso (11-13), C en inicio (0-10). Eficiencia = correctas ÷ preguntas calificadas. La nota aprobatoria se cambia en la hoja ${ND} (celda M3).`, expl);
   E.landscape = true;
 
   /* ======================= Hoja 2: Por curso ======================= */
-  const P = B.sheet('Por curso');
-  P.tab = '1C8A4B';
+  const P = B.sheet(NP);
+  P.tab = opts.tab || '1C8A4B';
   const PC = ['Curso', 'Preguntas', 'N° de preguntas', 'Puntaje máximo', 'Puntaje promedio', 'Correctas (total)', 'Incorrectas (total)', 'En blanco (total)', 'Correctas promedio por estudiante', 'Eficiencia del curso', 'Nota promedio (0-20)', 'Nivel'];
   const pc = {}; PC.forEach((h, i) => pc[h] = 1 + i);
   P.merge(0, 1, 0, PC.length, `Resultados por curso — ${D.exam}`, title); P.height(0, 34);
@@ -1022,7 +1043,7 @@ function buildReport(D) {
     P.set(r, pc['Curso'], sc.name, td({ font: { b: true, color: sc.color } }));
     P.set(r, pc['Preguntas'], `${sc.from} – ${sc.to}`, tdC());
     P.set(r, pc['N° de preguntas'], sc.n, tdC('0'));
-    P.set(r, pc['Puntaje máximo'], sc.max, tdC('0.##'));
+    P.set(r, pc['Puntaje máximo'], sc.max, tdC('General'));
     P.set(r, pc['Puntaje promedio'], avg(S.map(s => s.secs[j].score)), tdC('0.00'), `IFERROR(AVERAGE(${rng(secCol(j, 'Puntaje'))}),0)`);
     P.set(r, pc['Correctas (total)'], cc, tdC('0', { font: { color: C.ok, b: true } }), `SUM(${rng(secCol(j, 'Correctas'))})`);
     P.set(r, pc['Incorrectas (total)'], ww, tdC('0', { font: { color: C.bad, b: true } }), `SUM(${rng(secCol(j, 'Incorrectas'))})`);
@@ -1040,7 +1061,7 @@ function buildReport(D) {
   P.set(PT, pc['Curso'], 'Total del examen', { ...totS, align: { h: 'left', v: 'center' } });
   P.set(PT, pc['Preguntas'], `1 – ${D.nQ}`, totS);
   P.set(PT, pc['N° de preguntas'], secs.reduce((a, s) => a + s.n, 0), { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['N° de preguntas'])})` : null);
-  P.set(PT, pc['Puntaje máximo'], secs.reduce((a, s) => a + s.max, 0), { ...totS, num: '0.##' }, secs.length ? `SUM(${RS(pc['Puntaje máximo'])})` : null);
+  P.set(PT, pc['Puntaje máximo'], secs.reduce((a, s) => a + s.max, 0), { ...totS, num: 'General' }, secs.length ? `SUM(${RS(pc['Puntaje máximo'])})` : null);
   P.set(PT, pc['Puntaje promedio'], avg(S.map(s => s.score)), { ...totS, num: '0.00' }, `IFERROR(AVERAGE(${rng(col['Puntaje'])}),0)`);
   P.set(PT, pc['Correctas (total)'], TC, { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['Correctas (total)'])})` : null);
   P.set(PT, pc['Incorrectas (total)'], TW, { ...totS, num: '0' }, secs.length ? `SUM(${RS(pc['Incorrectas (total)'])})` : null);
@@ -1077,14 +1098,14 @@ function buildReport(D) {
   P.landscape = true;
 
   /* ======================= Hoja 1: Dashboard ======================= */
-  const Dh = B.sheet('Dashboard');
-  B.sheets = [Dh, P, E]; // orden: Dashboard, Por curso, Por estudiante
-  Dh.tab = C.yellow;
+  const Dh = B.sheet(ND);
+  B.sheets = [...B.sheets.slice(0, startLen), Dh, P, E]; // orden: Dashboard, Por curso, Por estudiante
+  Dh.tab = opts.tab || C.yellow;
   Dh.width(0, 2); for (let c = 1; c <= 12; c++) Dh.width(c, 11.5); Dh.width(13, 2);
   Dh.merge(1, 1, 1, 12, `Resultados del salón — ${D.exam}`, { ...title, font: { b: true, sz: 20, color: C.white } }); Dh.height(1, 40);
   Dh.merge(2, 1, 2, 9, `${D.nQ} preguntas · ${secs.length} cursos · ${N} estudiantes evaluados · escala vigesimal (0 a 20) · ${D.date}`, subtitle);
   Dh.merge(2, 10, 2, 11, 'Nota aprobatoria:', { font: { b: true, sz: 10, color: C.white }, fill: C.ink, align: { h: 'right', v: 'center' } });
-  Dh.set(2, 12, pass, { font: { b: true, sz: 12, color: C.blue }, fill: 'FFF4CC', border: { all: 'medium:' + C.yellow }, align: { h: 'center', v: 'center' }, num: '0.##' });
+  Dh.set(2, 12, pass, { font: { b: true, sz: 12, color: C.blue }, fill: 'FFF4CC', border: { all: 'medium:' + C.yellow }, align: { h: 'center', v: 'center' }, num: 'General' });
   Dh.height(2, 24);
   Dh.style(3, 1, 3, 12, strip); Dh.height(3, 5);
   // KPIs
@@ -1119,11 +1140,11 @@ function buildReport(D) {
     Dh.height(11, 22);
     secs.forEach((sc, j) => {
       const r = 12 + j, pr = PH + 1 + j;
-      Dh.merge(r, 7, r, 9, sc.name, td({ font: { b: true, color: sc.color } }), `'Por curso'!${ref(pr, pc['Curso'])}`);
-      Dh.set(r, 10, (() => { const cc = S.reduce((a, s) => a + s.secs[j].c, 0), t = S.reduce((a, s) => a + s.secs[j].n, 0); return t ? cc / t : 0; })(), tdC('0%', { font: { b: true } }), `'Por curso'!${ref(pr, pc['Eficiencia del curso'])}`);
+      Dh.merge(r, 7, r, 9, sc.name, td({ font: { b: true, color: sc.color } }), `${q(NP)}!${ref(pr, pc['Curso'])}`);
+      Dh.set(r, 10, (() => { const cc = S.reduce((a, s) => a + s.secs[j].c, 0), t = S.reduce((a, s) => a + s.secs[j].n, 0); return t ? cc / t : 0; })(), tdC('0%', { font: { b: true } }), `${q(NP)}!${ref(pr, pc['Eficiencia del curso'])}`);
       const np = avg(S.map(s => s.secs[j].nota));
-      Dh.set(r, 11, np, tdC('0.0'), `'Por curso'!${ref(pr, pc['Nota promedio (0-20)'])}`);
-      Dh.set(r, 12, lvlOf(np), tdC(null, { font: { b: true } }), `'Por curso'!${ref(pr, pc['Nivel'])}`);
+      Dh.set(r, 11, np, tdC('0.0'), `${q(NP)}!${ref(pr, pc['Nota promedio (0-20)'])}`);
+      Dh.set(r, 12, lvlOf(np), tdC(null, { font: { b: true } }), `${q(NP)}!${ref(pr, pc['Nivel'])}`);
       Dh.height(r, 20);
     });
     Dh.dataBar(`${ref(12, 10)}:${ref(11 + secs.length, 10)}`, '2F6FDE');
@@ -1176,9 +1197,9 @@ function buildReport(D) {
   top.forEach((s, i) => {
     const r = y + 3 + i, rr = R0 + i;
     Dh.set(r, 1, i + 1, tdC('0', { font: { b: true } }));
-    Dh.merge(r, 2, r, 4, s.display, td({ font: { b: true } }), `'Por estudiante'!${ref(rr, col['Estudiante'])}`);
-    Dh.set(r, 5, s.nota, tdC('0.0', { font: { b: true, color: C.ok } }), `'Por estudiante'!${ref(rr, col['Nota (0-20)'])}`);
-    Dh.set(r, 6, lvlOf(s.nota), tdC(), `'Por estudiante'!${ref(rr, col['Nivel'])}`);
+    Dh.merge(r, 2, r, 4, s.display, td({ font: { b: true } }), `${q(NE)}!${ref(rr, col['Estudiante'])}`);
+    Dh.set(r, 5, s.nota, tdC('0.0', { font: { b: true, color: C.ok } }), `${q(NE)}!${ref(rr, col['Nota (0-20)'])}`);
+    Dh.set(r, 6, lvlOf(s.nota), tdC(), `${q(NE)}!${ref(rr, col['Nivel'])}`);
     Dh.height(r, 20);
   });
   ['Pregunta', 'Curso', '% aciertos', 'Clave', 'Más marcada'].forEach((h, i) => Dh.set(y + 2, 8 + i, h, th));
@@ -1198,13 +1219,278 @@ function buildReport(D) {
     '• Eficiencia: porcentaje de respuestas correctas sobre las preguntas calificadas. Una pregunta en blanco o con doble marca cuenta como no acertada.',
     '• Aprobados: estudiantes con nota mayor o igual a la nota aprobatoria (celda M3, puedes cambiarla y todo el libro se recalcula).',
     '• Niveles de logro: AD logro destacado (18-20), A logro esperado (14-17), B en proceso (11-13), C en inicio (0-10).',
-    '• Hoja "Por curso": correctas, incorrectas y en blanco de todo el salón, eficiencia y nota promedio de cada curso.',
-    '• Hoja "Por estudiante": una fila por alumno con su nota general y por curso. Usa el buscador (celda C5) o las flechas de filtro del encabezado para ordenar y buscar.'
+    `• Hoja "${NP}": correctas, incorrectas y en blanco de todo el salón, eficiencia y nota promedio de cada curso.`,
+    `• Hoja "${NE}": una fila por alumno con su nota general y por curso. Usa el buscador (celda C5) o las flechas de filtro del encabezado para ordenar y buscar.`
   ];
   help.forEach((t, i) => { Dh.merge(y + 1 + i, 1, y + 1 + i, 12, t, { font: { sz: 10, color: '3A4047' }, fill: C.soft, align: { v: 'center', wrap: true, indent: 1 } }); Dh.height(y + 1 + i, 30); });
   Dh.set(y + 8, 1, `Generado por el Lector de cartillas el ${D.date}.`, { font: { i: true, sz: 8, color: C.muted } });
   Dh.landscape = false;
+  if (opts.book) return { NE, NP, ND, R0, R1, col, secCol, students: S };
   return B.build({ title: `Resultados — ${D.exam}` });
+}
+/* ===== Reporte Excel estilo UNI: 3 evaluaciones + resultado final ===== */
+function buildUniReport(G) {
+  const { colL, ref, absRef, sheetRef } = XL;
+  const B = new XL.Book();
+  const C = { ink: '23272B', muted: '6B737B', line: 'DDE2DF', soft: 'F5F7F6', yellow: 'F2BE2C', ok: '1C8A4B', bad: 'CC3A2A', white: 'FFFFFF', blue: '1F4FBF' };
+  const EVC = ['2F6FDE', 'C2410C', '8E44AD'];
+  const LV = [
+    { k: 'AD', name: 'Logro destacado', range: '18 – 20', color: '1C8A4B', test: n => n >= 18 },
+    { k: 'A', name: 'Logro esperado', range: '14 – 17', color: '5FA84F', test: n => n >= 14 && n < 18 },
+    { k: 'B', name: 'En proceso', range: '11 – 13', color: 'E0A21B', test: n => n >= 11 && n < 14 },
+    { k: 'C', name: 'En inicio', range: '0 – 10', color: 'CC3A2A', test: n => n < 11 }
+  ];
+  const lvlOf = n => n >= 18 ? 'AD' : n >= 14 ? 'A' : n >= 11 ? 'B' : 'C';
+  const lvlF = x => `IF(${x}>=18,"AD",IF(${x}>=14,"A",IF(${x}>=11,"B","C")))`;
+  const q = n => `'${n.replace(/'/g, "''")}'`;
+  const str = v => `"${String(v).replace(/"/g, '""')}"`;
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+  const title = { font: { b: true, sz: 18, color: C.white }, fill: C.ink, align: { v: 'center', indent: 1 } };
+  const subtitle = { font: { sz: 10, color: 'C9D0D4' }, fill: C.ink, align: { v: 'center', indent: 1 } };
+  const strip = { fill: C.yellow };
+  const secTitle = { font: { b: true, sz: 13, color: C.ink }, border: { bottom: 'medium:' + C.yellow }, align: { v: 'bottom' } };
+  const expl = { font: { i: true, sz: 9, color: C.muted }, align: { wrap: true, v: 'top' } };
+  const th = { font: { b: true, sz: 10, color: C.white }, fill: C.ink, align: { h: 'center', v: 'center', wrap: true }, border: { all: 'thin:' + C.ink } };
+  const td = (extra = {}) => ({ font: { sz: 10, color: C.ink, ...(extra.font || {}) }, border: { bottom: 'thin:' + C.line }, align: { v: 'center', ...(extra.align || {}) }, ...(extra.num ? { num: extra.num } : {}), ...(extra.fill ? { fill: extra.fill } : {}) });
+  const tdC = (num, extra = {}) => td({ ...extra, num, align: { h: 'center' } });
+  const scale20 = [[0, 'F8696B'], [10.5, 'FFEB84'], [20, '63BE7B']];
+
+  const FD = B.sheet('UNI Dashboard'), FE = B.sheet('UNI Por estudiante');
+  FD.tab = C.yellow; FE.tab = C.ink;
+  const K = G.evals.length;
+  const infos = G.evals.map((ev, i) => ev.D && ev.D.students.length ? buildReport(ev.D, { book: B, prefix: `E${i + 1} `, tableSuffix: String(i + 1), tab: EVC[i % 3] }) : null);
+  const S = G.students, N = S.length, pass = G.pass20;
+  const PASS = `${q(FD.name)}!$M$3`;
+
+  /* ======================= UNI Por estudiante ======================= */
+  const base = ['Puesto', 'Código', 'Estudiante', 'Nota final (0-20)', 'Nivel', 'Estado', 'Puntaje acumulado', 'Puntaje máximo acumulado', 'Puntaje final (promedio)', 'Evaluaciones rendidas', 'Tendencia E1 a E' + K];
+  const evF = ['Nota (0-20)', 'Puntaje', 'Eficiencia'];
+  const c0 = 1, col = {}; base.forEach((h, i) => col[h] = c0 + i);
+  const eCol = (k, f) => c0 + base.length + k * evF.length + evF.indexOf(f);
+  const lastCol = c0 + base.length + K * evF.length - 1;
+  const HR = 11 + K + 2, R0 = HR + 1, R1 = R0 + Math.max(N, 1) - 1;
+  const loc = c => `${absRef(R0, c)}:${absRef(R1, c)}`;
+  const rng = c => `${q(FE.name)}!${loc(c)}`;
+  const nfin = rng(col['Nota final (0-20)']), names = rng(col['Estudiante']);
+
+  FE.merge(0, 1, 0, lastCol, `Resultado final por estudiante — ${G.name}`, title); FE.height(0, 34);
+  FE.merge(1, 1, 1, lastCol, `Estilo UNI: nota final = promedio de las ${K} evaluaciones (escala 0 a 20). Si no rindió una evaluación, esa nota cuenta como 0. ${N} estudiantes · ${G.date}`, subtitle); FE.height(1, 20);
+  FE.style(2, 1, 2, lastCol, strip); FE.height(2, 5);
+  // buscador
+  FE.set(4, 1, 'Buscar:', { font: { b: true, sz: 11, color: C.ink }, align: { h: 'right', v: 'center' } });
+  FE.merge(4, 2, 4, 4, S[0] ? S[0].display : '', { font: { b: true, sz: 11, color: C.blue }, fill: 'FFF4CC', border: { all: 'medium:' + C.yellow }, align: { v: 'center', indent: 1 } });
+  FE.dv.push({ sqref: ref(4, 2), formula: loc(col['Estudiante']), promptTitle: 'Buscar', prompt: 'Elige un estudiante de la lista.' });
+  FE.merge(4, 5, 4, 10, '◄ Elige un estudiante de la lista desplegable para ver su resultado final y el de cada evaluación. Para filtrar, usa las flechas del encabezado de la tabla.', { font: { i: true, sz: 9, color: C.muted }, align: { v: 'center', wrap: true } });
+  FE.height(4, 26);
+  const mc = [4, lastCol + 1];
+  FE.set(mc[0], mc[1], S.length ? 1 : 0, { font: { sz: 8, color: 'FFFFFF' } }, `IFERROR(MATCH(${ref(4, 2)},${loc(col['Estudiante'])},0),0)`);
+  const M = '$' + colL(mc[1]) + '$' + (mc[0] + 1);
+  const pick = (c) => `IF(${M}=0,"",INDEX(${loc(c)},${M}))`;
+  const s0 = S[0];
+  const cardL = { font: { sz: 9, color: C.muted }, fill: C.soft, align: { h: 'center', v: 'center', wrap: true }, border: { top: 'medium:' + C.yellow } };
+  [['Puesto', 'Puesto', s0 && 1, '0'], ['Código', 'Código', s0 && s0.code], ['Nota final', 'Nota final (0-20)', s0 && s0.notaFinal, '0.00'], ['Nivel', 'Nivel', s0 && lvlOf(s0.notaFinal)], ['Estado', 'Estado', s0 && (s0.notaFinal >= pass ? 'Aprobado' : 'Desaprobado')],
+    ['Puntaje acumulado', 'Puntaje acumulado', s0 && s0.scoreAcum, 'General'], ['Puntaje final', 'Puntaje final (promedio)', s0 && s0.scoreFinal, '0.00'], ['Evaluaciones rendidas', 'Evaluaciones rendidas', s0 && s0.rendidas, '0']]
+    .forEach(([lab, key, v, num], i) => {
+      FE.set(6, 1 + i, lab, cardL);
+      FE.set(7, 1 + i, v ?? '', { font: { b: true, sz: ['Código', 'Estado'].includes(lab) ? 12 : 16, color: lab === 'Nota final' ? C.blue : C.ink }, fill: C.soft, align: { h: 'center', v: 'center' }, ...(num ? { num } : {}) }, pick(col[key]));
+    });
+  FE.height(6, 26); FE.height(7, 32);
+  FE.exprRule(ref(7, 5), `${ref(7, 5)}="Desaprobado"`, B.styles.dxf(C.bad, null, true));
+  FE.exprRule(ref(7, 5), `${ref(7, 5)}="Aprobado"`, B.styles.dxf(C.ok, null, true));
+  FE.set(9, 2, 'Por evaluación', { font: { b: true, sz: 10, color: C.ink }, align: { h: 'right', v: 'center' } });
+  ['Evaluación', '', 'Nota (0-20)', 'Nivel', 'Puntaje', 'Eficiencia'].forEach((h, i) => { if (h) FE.set(9, 3 + i, h, th); });
+  FE.merge(9, 3, 9, 4, 'Evaluación', th);
+  G.evals.forEach((ev, k) => {
+    const r = 10 + k, p = s0 && s0.per[k];
+    FE.merge(r, 3, r, 4, `E${k + 1} · ${ev.label}`, td({ font: { b: true, color: EVC[k % 3] } }));
+    FE.set(r, 5, p ? p.nota : '', tdC('0.00', { font: { b: true } }), pick(eCol(k, 'Nota (0-20)')));
+    FE.set(r, 6, p ? lvlOf(p.nota) : '', tdC(), `IF(${M}=0,"",${lvlF(ref(r, 5))})`);
+    FE.set(r, 7, p ? p.score : '', tdC('General'), pick(eCol(k, 'Puntaje')));
+    FE.set(r, 8, p ? p.eff : '', tdC('0%'), pick(eCol(k, 'Eficiencia')));
+  });
+  FE.height(9, 22);
+  FE.colorScale(`${ref(10, 5)}:${ref(9 + K, 5)}`, scale20); FE.dataBar(`${ref(10, 8)}:${ref(9 + K, 8)}`, '2F6FDE');
+  // tabla principal
+  FE.merge(HR - 1, c0, HR - 1, c0 + base.length - 1, 'Resultado final', { ...th, fill: '3A4047' });
+  G.evals.forEach((ev, k) => FE.merge(HR - 1, eCol(k, 'Nota (0-20)'), HR - 1, eCol(k, 'Eficiencia'), `E${k + 1} · ${ev.label}`, { ...th, fill: EVC[k % 3] }));
+  const heads = [...base, ...G.evals.flatMap((_, k) => evF.map(f => `E${k + 1} ${f}`))];
+  heads.forEach((h, i) => FE.set(HR, c0 + i, h, { ...th, fill: i < base.length ? C.ink : EVC[Math.floor((i - base.length) / evF.length) % 3] }));
+  FE.height(HR, 42);
+  const look = (info, p, field) => {
+    const lc = p.byCode ? info.col['Código'] : info.col['Estudiante'];
+    return `IFERROR(INDEX(${q(info.NE)}!${absRef(info.R0, info.col[field])}:${absRef(info.R1, info.col[field])},MATCH(${str(p.lookup)},${q(info.NE)}!${absRef(info.R0, lc)}:${absRef(info.R1, lc)},0)),0)`;
+  };
+  S.forEach((s, i) => {
+    const r = R0 + i, R = x => ref(r, x);
+    FE.set(r, col['Puesto'], i + 1, tdC('0'), `RANK(${R(col['Nota final (0-20)'])},${loc(col['Nota final (0-20)'])})`);
+    FE.set(r, col['Código'], s.code, tdC());
+    FE.set(r, col['Estudiante'], s.display, td({ font: { b: true } }));
+    G.evals.forEach((ev, k) => {
+      const p = s.per[k], info = infos[k];
+      const miss = { font: { color: 'A9B1B8', i: true } };
+      if (p.in && info) {
+        FE.set(r, eCol(k, 'Nota (0-20)'), p.nota, tdC('0.00', { font: { b: true } }), look(info, p, 'Nota (0-20)'));
+        FE.set(r, eCol(k, 'Puntaje'), p.score, tdC('General'), look(info, p, 'Puntaje'));
+        FE.set(r, eCol(k, 'Eficiencia'), p.eff, tdC('0%'), look(info, p, 'Eficiencia'));
+      } else {
+        FE.set(r, eCol(k, 'Nota (0-20)'), 0, tdC('0.00', miss));
+        FE.set(r, eCol(k, 'Puntaje'), 0, tdC('General', miss));
+        FE.set(r, eCol(k, 'Eficiencia'), 0, tdC('0%', miss));
+      }
+    });
+    const notas = G.evals.map((_, k) => R(eCol(k, 'Nota (0-20)'))), pts = G.evals.map((_, k) => R(eCol(k, 'Puntaje')));
+    FE.set(r, col['Nota final (0-20)'], s.notaFinal, tdC('0.00', { font: { b: true, sz: 11 } }), `(${notas.join('+')})/${K}`);
+    FE.set(r, col['Nivel'], lvlOf(s.notaFinal), tdC(null, { font: { b: true } }), lvlF(R(col['Nota final (0-20)'])));
+    FE.set(r, col['Estado'], s.notaFinal >= pass ? 'Aprobado' : 'Desaprobado', tdC(), `IF(${R(col['Nota final (0-20)'])}>=${PASS},"Aprobado","Desaprobado")`);
+    FE.set(r, col['Puntaje acumulado'], s.scoreAcum, tdC('General', { font: { b: true } }), pts.join('+'));
+    FE.set(r, col['Puntaje máximo acumulado'], G.maxAcum, tdC('General'));
+    FE.set(r, col['Puntaje final (promedio)'], s.scoreFinal, tdC('0.00'), `${R(col['Puntaje acumulado'])}/${K}`);
+    FE.set(r, col['Evaluaciones rendidas'], s.rendidas, tdC('0', { font: { b: true, color: s.rendidas < K ? C.bad : C.ink } }));
+    const tk = col['Tendencia E1 a E' + K];
+    if (s.per[0].in && s.per[K - 1].in) FE.set(r, tk, s.per[K - 1].nota - s.per[0].nota, tdC('+0.00;-0.00;0.00', { font: { b: true } }), `${notas[K - 1]}-${notas[0]}`);
+    else FE.set(r, tk, '—', tdC(null, { font: { color: 'A9B1B8' } }));
+  });
+  if (N) {
+    FE.table({ name: 'TablaFinal', r1: HR, c1: c0, r2: R1, c2: lastCol, columns: heads, style: 'TableStyleLight15' });
+    FE.colorScale(loc(col['Nota final (0-20)']).replace(/\$/g, ''), scale20);
+    G.evals.forEach((_, k) => { FE.colorScale(loc(eCol(k, 'Nota (0-20)')).replace(/\$/g, ''), scale20); FE.dataBar(loc(eCol(k, 'Eficiencia')).replace(/\$/g, ''), EVC[k % 3]); });
+    FE.dataBar(loc(col['Puntaje acumulado']).replace(/\$/g, ''), '1C8A4B', 0, G.maxAcum || 1);
+    const st = loc(col['Estado']).replace(/\$/g, ''), f0 = ref(R0, col['Estado']);
+    FE.exprRule(st, `${f0}="Desaprobado"`, B.styles.dxf(C.bad, 'FBE3DF', true));
+    FE.exprRule(st, `${f0}="Aprobado"`, B.styles.dxf(C.ok, 'DDF1E5', true));
+    const tk = col['Tendencia E1 a E' + K], tr = loc(tk).replace(/\$/g, ''), t0 = ref(R0, tk);
+    FE.exprRule(tr, `AND(ISNUMBER(${t0}),${t0}>0)`, B.styles.dxf(C.ok, 'DDF1E5', true));
+    FE.exprRule(tr, `AND(ISNUMBER(${t0}),${t0}<0)`, B.styles.dxf(C.bad, 'FBE3DF', true));
+    const rd = loc(col['Evaluaciones rendidas']).replace(/\$/g, ''), r0 = ref(R0, col['Evaluaciones rendidas']);
+    FE.exprRule(rd, `${r0}<${K}`, B.styles.dxf(C.bad, 'FBE3DF', true));
+  }
+  FE.freeze = { r: HR + 1, c: col['Estudiante'] + 1 };
+  FE.width(0, 2); base.forEach((h, i) => FE.width(c0 + i, h === 'Estudiante' ? 30 : h === 'Estado' ? 14 : 12));
+  G.evals.forEach((_, k) => evF.forEach(f => FE.width(eCol(k, f), 11)));
+  FE.merge(R1 + 2, 1, R1 + 3, 12, `Nota final = promedio de las notas vigesimales de las ${K} evaluaciones. Puntaje acumulado = suma de los puntajes; puntaje final = promedio de los puntajes. Tendencia = nota de la última evaluación menos la de la primera (verde: mejoró, rojo: bajó). En gris: evaluación no rendida (cuenta como 0).`, expl);
+  FE.landscape = true;
+
+  /* ======================= UNI Dashboard ======================= */
+  FD.width(0, 2); for (let c = 1; c <= 12; c++) FD.width(c, 11.5); FD.width(13, 2);
+  FD.merge(1, 1, 1, 12, `Resultado final estilo UNI — ${G.name}`, { ...title, font: { b: true, sz: 20, color: C.white } }); FD.height(1, 40);
+  FD.merge(2, 1, 2, 9, `${K} evaluaciones · ${N} estudiantes · nota final = promedio de las ${K} notas (0 a 20) · ${G.date}`, subtitle);
+  FD.merge(2, 10, 2, 11, 'Nota aprobatoria:', { font: { b: true, sz: 10, color: C.white }, fill: C.ink, align: { h: 'right', v: 'center' } });
+  FD.set(2, 12, pass, { font: { b: true, sz: 12, color: C.blue }, fill: 'FFF4CC', border: { all: 'medium:' + C.yellow }, align: { h: 'center', v: 'center' }, num: 'General' });
+  FD.height(2, 24); FD.style(3, 1, 3, 12, strip); FD.height(3, 5);
+  const finals = S.map(s => s.notaFinal), avgF = avg(finals), nPass = S.filter(s => s.notaFinal >= pass).length, nAll = S.filter(s => s.rendidas === K).length;
+  const best = S[0], worst = S[S.length - 1];
+  const rendR = rng(col['Evaluaciones rendidas']);
+  [
+    ['Estudiantes', N, '0', `${nAll} rindieron las ${K}`, `COUNTA(${names})`, `COUNTIF(${rendR},${K})&" rindieron las ${K}"`, '2F6FDE'],
+    ['Promedio final', avgF, '0.00', `nivel ${lvlOf(avgF)} · sobre 20`, `IFERROR(AVERAGE(${nfin}),0)`, `"nivel "&${lvlF(`IFERROR(AVERAGE(${nfin}),0)`)}&" · sobre 20"`, C.ink],
+    ['Aprobados', nPass, '0', `${N ? Math.round(nPass / N * 100) : 0}% del salón`, `COUNTIF(${nfin},">="&$M$3)`, `TEXT(IFERROR(COUNTIF(${nfin},">="&$M$3)/COUNTA(${names}),0),"0%")&" del salón"`, C.ok],
+    ['Puntaje acumulado prom.', avg(S.map(s => s.scoreAcum)), '0.0', `de ${G.maxAcum} posibles`, `IFERROR(AVERAGE(${rng(col['Puntaje acumulado'])}),0)`, `"de ${G.maxAcum} posibles"`, 'E0A21B'],
+    ['Nota final más alta', best ? best.notaFinal : 0, '0.00', best ? best.display : '', `IFERROR(MAX(${nfin}),0)`, `IFERROR(INDEX(${names},MATCH(MAX(${nfin}),${nfin},0)),"")`, C.ok],
+    ['Nota final más baja', worst ? worst.notaFinal : 0, '0.00', worst ? worst.display : '', `IFERROR(MIN(${nfin}),0)`, `IFERROR(INDEX(${names},MATCH(MIN(${nfin}),${nfin},0)),"")`, C.bad]
+  ].forEach(([lab, v, num, det, f, fdet, color], i) => {
+    const c1 = 1 + i * 2;
+    FD.merge(5, c1, 5, c1 + 1, lab, { font: { b: true, sz: 9, color: C.muted }, fill: C.soft, border: { top: 'thick:' + color }, align: { h: 'center', v: 'center' } });
+    FD.merge(6, c1, 6, c1 + 1, v, { font: { b: true, sz: 24, color }, fill: C.soft, align: { h: 'center', v: 'center' }, num }, f);
+    FD.merge(7, c1, 7, c1 + 1, det, { font: { sz: 9, color: C.muted }, fill: C.soft, align: { h: 'center', v: 'center', wrap: true } }, fdet);
+  });
+  FD.height(5, 20); FD.height(6, 40); FD.height(7, 26);
+  // Comparación de evaluaciones
+  FD.merge(9, 1, 9, 12, `Comparación de las ${K} evaluaciones`, secTitle); FD.height(9, 24);
+  FD.merge(10, 1, 10, 12, 'Promedio de nota (0 a 20) de cada evaluación, solo entre quienes la rindieron. Sirve para ver si el salón mejora de un simulacro a otro.', expl); FD.height(10, 28);
+  FD.merge(11, 6, 11, 8, 'Evaluación', th); ['Promedio', 'Eficiencia', 'Aprobados', 'Rindieron'].forEach((h, i) => FD.set(11, 9 + i, h, th)); FD.height(11, 22);
+  const evStats = G.evals.map((ev, k) => {
+    const d = ev.D && ev.D.students.length ? ev.D.students : [];
+    const notas = d.map(s => s.nota);
+    const cc = d.reduce((a, s) => a + s.c, 0), tt = d.reduce((a, s) => a + s.c + s.w + s.b, 0);
+    return { avg: avg(notas), eff: tt ? cc / tt : 0, pass: notas.filter(n => n >= pass).length, n: d.length };
+  });
+  G.evals.forEach((ev, k) => {
+    const r = 12 + k, info = infos[k], st = evStats[k];
+    FD.merge(r, 6, r, 8, `E${k + 1} · ${ev.label}`, td({ font: { b: true, color: EVC[k % 3] } }));
+    const nr = info ? `${q(info.NE)}!${absRef(info.R0, info.col['Nota (0-20)'])}:${absRef(info.R1, info.col['Nota (0-20)'])}` : null;
+    const cr = f => `${q(info.NE)}!${absRef(info.R0, info.col[f])}:${absRef(info.R1, info.col[f])}`;
+    FD.set(r, 9, st.avg, tdC('0.00', { font: { b: true } }), nr ? `IFERROR(AVERAGE(${nr}),0)` : null);
+    FD.set(r, 10, st.eff, tdC('0%'), info ? `IFERROR(SUM(${cr('Correctas')})/(SUM(${cr('Correctas')})+SUM(${cr('Incorrectas')})+SUM(${cr('En blanco')})),0)` : null);
+    FD.set(r, 11, st.pass, tdC('0'), nr ? `COUNTIF(${nr},">="&$M$3)` : null);
+    FD.set(r, 12, st.n, tdC('0'), nr ? `COUNTA(${cr('Estudiante')})` : null);
+    FD.height(r, 22);
+  });
+  FD.colorScale(`${ref(12, 9)}:${ref(11 + K, 9)}`, scale20); FD.dataBar(`${ref(12, 10)}:${ref(11 + K, 10)}`, '2F6FDE');
+  FD.chart({
+    type: 'bar', dir: 'col', gap: 70, numFmt: '0', labelFmt: '0.0', max: 20,
+    catRef: sheetRef(FD, 12, 6, 11 + K, 6), cats: G.evals.map((ev, k) => `E${k + 1} · ${ev.label}`),
+    series: [{ name: 'Promedio', ref: sheetRef(FD, 12, 9, 11 + K, 9), values: evStats.map(s => s.avg), color: '2F6FDE', pointColors: G.evals.map((_, k) => EVC[k % 3]) }]
+  }, 11, 1, 25, 6);
+  // evolución
+  const tk = col['Tendencia E1 a E' + K], trng = rng(tk);
+  const up = S.filter(s => s.per[0].in && s.per[K - 1].in && s.per[K - 1].nota - s.per[0].nota > 0).length;
+  const down = S.filter(s => s.per[0].in && s.per[K - 1].in && s.per[K - 1].nota - s.per[0].nota < 0).length;
+  const same = S.filter(s => s.per[0].in && s.per[K - 1].in && s.per[K - 1].nota - s.per[0].nota === 0).length;
+  const eY = 13 + K;
+  FD.merge(eY, 7, eY, 12, `Evolución de E1 a E${K} (quienes rindieron ambas)`, { font: { b: true, sz: 10, color: C.ink }, align: { v: 'center' } });
+  [['Mejoraron', up, `COUNTIF(${trng},">0")`, C.ok], ['Bajaron', down, `COUNTIF(${trng},"<0")`, C.bad], ['Se mantuvieron', same, `COUNTIF(${trng},0)`, C.muted]].forEach(([lab, v, f, color], i) => {
+    const c1 = 7 + i * 2;
+    FD.merge(eY + 1, c1, eY + 1, c1 + 1, lab, { font: { b: true, sz: 9, color: C.muted }, fill: C.soft, border: { top: 'thick:' + color }, align: { h: 'center', v: 'center' } });
+    FD.merge(eY + 2, c1, eY + 2, c1 + 1, v, { font: { b: true, sz: 20, color }, fill: C.soft, align: { h: 'center', v: 'center' }, num: '0' }, f);
+  });
+  FD.height(eY + 2, 34);
+  // niveles de la nota final
+  let y = 27;
+  FD.merge(y, 1, y, 12, 'Niveles de la nota final y aprobación', secTitle); FD.height(y, 24);
+  FD.merge(y + 1, 1, y + 1, 12, `Izquierda: estudiantes por nivel de logro según su nota final (escala del Minedu). Derecha: aprobados con nota final mayor o igual a ${pass}.`, expl); FD.height(y + 1, 28);
+  const tY = y + 17, lvC = LV.map(l => S.filter(s => l.test(s.notaFinal)).length);
+  FD.chart({ type: 'bar', dir: 'col', gap: 50, numFmt: '0', labelFmt: '0', catRef: sheetRef(FD, tY + 1, 2, tY + 4, 2), cats: LV.map(l => l.name), series: [{ name: 'Estudiantes', ref: sheetRef(FD, tY + 1, 5, tY + 4, 5), values: lvC, color: '2F6FDE', pointColors: LV.map(l => l.color) }] }, y + 2, 1, y + 16, 7);
+  FD.chart({ type: 'doughnut', legend: 'b', labelFmt: '0%', showVal: false, catRef: sheetRef(FD, tY + 1, 8, tY + 2, 8), cats: ['Aprobados', 'Desaprobados'], series: [{ name: 'Estudiantes', ref: sheetRef(FD, tY + 1, 10, tY + 2, 10), values: [nPass, N - nPass], color: C.ok, pointColors: [C.ok, C.bad] }] }, y + 2, 8, y + 16, 13);
+  FD.set(tY, 1, 'Nivel', th); FD.merge(tY, 2, tY, 3, 'Descripción', th); FD.set(tY, 4, 'Rango', th); FD.set(tY, 5, 'Estudiantes', th); FD.set(tY, 6, '% del salón', th);
+  LV.forEach((l, i) => {
+    const r = tY + 1 + i;
+    FD.set(r, 1, l.k, tdC(null, { font: { b: true, color: l.color } }));
+    FD.merge(r, 2, r, 3, l.name, td({ font: { b: true, color: l.color } }));
+    FD.set(r, 4, l.range, tdC());
+    const f = l.k === 'AD' ? `COUNTIF(${nfin},">=18")` : l.k === 'A' ? `COUNTIFS(${nfin},">=14",${nfin},"<18")` : l.k === 'B' ? `COUNTIFS(${nfin},">=11",${nfin},"<14")` : `COUNTIF(${nfin},"<11")`;
+    FD.set(r, 5, lvC[i], tdC('0', { font: { b: true } }), f);
+    FD.set(r, 6, N ? lvC[i] / N : 0, tdC('0%'), `IFERROR(${ref(r, 5)}/SUM(${ref(tY + 1, 5)}:${ref(tY + 4, 5)}),0)`);
+  });
+  FD.dataBar(`${ref(tY + 1, 6)}:${ref(tY + 4, 6)}`, '2F6FDE');
+  FD.merge(tY, 8, tY, 9, 'Condición', th); FD.set(tY, 10, 'Estudiantes', th); FD.set(tY, 11, '% del salón', th);
+  [['Aprobados', nPass, `COUNTIF(${nfin},">="&$M$3)`, C.ok], ['Desaprobados', N - nPass, `COUNTA(${names})-${ref(tY + 1, 10)}`, C.bad]].forEach(([lab, v, f, color], i) => {
+    const r = tY + 1 + i;
+    FD.merge(r, 8, r, 9, lab, td({ font: { b: true, color } }));
+    FD.set(r, 10, v, tdC('0', { font: { b: true } }), f);
+    FD.set(r, 11, N ? v / N : 0, tdC('0%'), `IFERROR(${ref(r, 10)}/COUNTA(${names}),0)`);
+  });
+  for (let r = tY; r <= tY + 4; r++) FD.height(r, 20);
+  // Top 10
+  y = tY + 6;
+  FD.merge(y, 1, y, 12, 'Top 10 del ranking final', secTitle); FD.height(y, 24);
+  FD.set(y + 1, 1, '#', th); FD.merge(y + 1, 2, y + 1, 4, 'Estudiante', th);
+  G.evals.forEach((_, k) => FD.set(y + 1, 5 + k, `E${k + 1}`, { ...th, fill: EVC[k % 3] }));
+  const cf = 5 + K;
+  FD.set(y + 1, cf, 'Nota final', th); FD.set(y + 1, cf + 1, 'Nivel', th); FD.set(y + 1, cf + 2, 'Puntaje acum.', th);
+  FD.height(y + 1, 22);
+  S.slice(0, 10).forEach((s, i) => {
+    const r = y + 2 + i, rr = R0 + i, E = c => `${q(FE.name)}!${ref(rr, c)}`;
+    FD.set(r, 1, i + 1, tdC('0', { font: { b: true, color: i < 3 ? 'B8860B' : C.ink } }));
+    FD.merge(r, 2, r, 4, s.display, td({ font: { b: true } }), E(col['Estudiante']));
+    G.evals.forEach((_, k) => FD.set(r, 5 + k, s.per[k].in ? s.per[k].nota : 0, tdC('0.0'), E(eCol(k, 'Nota (0-20)'))));
+    FD.set(r, cf, s.notaFinal, tdC('0.00', { font: { b: true, color: C.blue } }), E(col['Nota final (0-20)']));
+    FD.set(r, cf + 1, lvlOf(s.notaFinal), tdC(null, { font: { b: true } }), E(col['Nivel']));
+    FD.set(r, cf + 2, s.scoreAcum, tdC('General'), E(col['Puntaje acumulado']));
+    FD.height(r, 20);
+  });
+  const topN = Math.min(10, N);
+  if (topN) { FD.colorScale(`${ref(y + 2, 5)}:${ref(y + 1 + topN, 4 + K)}`, scale20); FD.colorScale(`${ref(y + 2, cf)}:${ref(y + 1 + topN, cf)}`, scale20); }
+  y = y + 3 + topN;
+  FD.merge(y, 1, y, 12, 'Cómo leer este reporte', secTitle); FD.height(y, 24);
+  [
+    `• Nota final: promedio de las notas vigesimales (0 a 20) de las ${K} evaluaciones. Si un estudiante no rindió alguna, esa nota cuenta como 0.`,
+    '• Puntaje acumulado: suma de los puntajes obtenidos en las evaluaciones. Puntaje final: promedio de esos puntajes.',
+    '• Aprobados: nota final mayor o igual a la nota aprobatoria (celda M3; si la cambias, todo el libro se recalcula).',
+    `• Hoja "${FE.name}": ranking final con buscador (celda C5) y filtros. Las hojas E1, E2 y E3 tienen el detalle de cada evaluación: su dashboard, sus cursos y sus estudiantes.`,
+    '• Las notas de un estudiante se juntan por su código. Si en alguna evaluación marcó mal el código, aparecerá como otro estudiante: corrígelo en el programa antes de exportar.'
+  ].forEach((t, i) => { FD.merge(y + 1 + i, 1, y + 1 + i, 12, t, { font: { sz: 10, color: '3A4047' }, fill: C.soft, align: { v: 'center', wrap: true, indent: 1 } }); FD.height(y + 1 + i, 30); });
+  FD.set(y + 7, 1, `Generado por el Lector de cartillas el ${G.date}.`, { font: { i: true, sz: 8, color: C.muted } });
+  return B.build({ title: `Resultado final UNI — ${G.name}` });
 }
 /* ===== Acceso: usuarios, contraseñas cifradas (PBKDF2) y roles ===== */
 const Auth = (() => {
@@ -1410,7 +1696,7 @@ const COLORS = ['#2F6FDE', '#1C8A4B', '#C2410C', '#8E44AD', '#0E8C8C', '#B8860B'
 const GEN = { id: '_gen', name: 'Sin curso', pts: 1, wrong: 0, blank: 0, color: '#8A939B' };
 const heat = p => `hsl(${Math.round(p * 130)} ${p > .5 ? 50 : 62}% ${p > .6 ? 36 : 45}%)`;
 
-const S = { page: '', authErr: '', exams: {}, results: {}, cur: null, tab: 'config', scanMode: 'alumnos', sort: { k: 'nota', d: -1 }, q: '', item: null, detail: null, detView: 'img', synced: false, log: [], last: null };
+const S = { page: '', authErr: '', grp: null, groups: {}, exams: {}, results: {}, cur: null, tab: 'config', scanMode: 'alumnos', sort: { k: 'nota', d: -1 }, q: '', item: null, detail: null, detView: 'img', synced: false, log: [], last: null };
 
 function toast(msg) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
@@ -1422,14 +1708,14 @@ const LSK = 'lector_cartillas_v1';
 const Store = {
   col: null, timers: {},
   loadLocal() {
-    try { const j = JSON.parse(localStorage.getItem(LSK) || 'null'); if (j) { S.exams = j.exams || {}; S.results = j.results || {}; } } catch (e) { }
+    try { const j = JSON.parse(localStorage.getItem(LSK) || 'null'); if (j) { S.exams = j.exams || {}; S.results = j.results || {}; S.groups = j.groups || {}; } } catch (e) { }
   },
   saveLocal() {
-    try { localStorage.setItem(LSK, JSON.stringify({ exams: S.exams, results: S.results })); }
+    try { localStorage.setItem(LSK, JSON.stringify({ groups: S.groups, exams: S.exams, results: S.results })); }
     catch (e) {
       try {
         const slim = {}; for (const [k, r] of Object.entries(S.results)) slim[k] = { ...r, img: null };
-        localStorage.setItem(LSK, JSON.stringify({ exams: S.exams, results: slim }));
+        localStorage.setItem(LSK, JSON.stringify({ groups: S.groups, exams: S.exams, results: slim }));
       } catch (e2) { }
     }
   },
@@ -1452,10 +1738,12 @@ const Store = {
       const id = await user.id(); if (!id) return;
       const col = db.collection('data/users/' + id);
       const snap = await col.get();
-      const cE = {}, cR = {};
-      snap.docs.forEach(d => { const v = d.data(); if (!v || !v.id) return; if (d.id.startsWith('exam_')) cE[v.id] = v; else if (d.id.startsWith('res_')) cR[v.id] = v; });
+      const cE = {}, cR = {}, cG = {};
+      snap.docs.forEach(d => { const v = d.data(); if (!v || !v.id) return; if (d.id.startsWith('exam_')) cE[v.id] = v; else if (d.id.startsWith('res_')) cR[v.id] = v; else if (d.id.startsWith('grp_')) cG[v.id] = v; });
       this.col = col;
       for (const e of Object.values(S.exams)) if (!cE[e.id]) this.put('exam', e);
+      for (const g of Object.values(S.groups)) if (!cG[g.id]) this.put('grp', g);
+      Object.assign(S.groups, cG);
       for (const r of Object.values(S.results)) if (!cR[r.id]) this.put('res', r);
       Object.assign(S.exams, cE);
       for (const r of Object.values(cR)) { const l = S.results[r.id]; S.results[r.id] = (!r.img && l && l.img) ? { ...r, img: l.img } : r; }
@@ -1499,6 +1787,67 @@ function newExam(example) {
   S.exams[e.id] = e; Store.put('exam', e);
   return e;
 }
+/* ===== Evaluaciones estilo UNI (3 evaluaciones que se promedian) ===== */
+const UNI_EX = [
+  { name: 'Aptitud Académica y Humanidades', secs: [['Razonamiento verbal', 20], ['Razonamiento matemático', 20], ['Humanidades', 20]] },
+  { name: 'Matemática', secs: [['Aritmética', 10], ['Álgebra', 10], ['Geometría', 10], ['Trigonometría', 10]] },
+  { name: 'Física y Química', secs: [['Física', 20], ['Química', 20]] }
+];
+function newGroup(example) {
+  const n = Object.values(S.groups).length;
+  const g = { id: uid(), type: 'uni', name: example ? 'Simulacro UNI de ejemplo' : 'Simulacro UNI ' + (n + 1), exams: [], pass: 11, created: Date.now() };
+  for (let k = 0; k < 3; k++) {
+    const e = newExam(false);
+    e.groupId = g.id; e.groupIdx = k;
+    e.name = example ? UNI_EX[k].name : 'Evaluación ' + (k + 1);
+    if (example) {
+      let q = 1;
+      e.sections = UNI_EX[k].secs.map(([nm, cnt], i) => { const sct = { id: uid(), name: nm, from: q, to: q + cnt - 1, pts: 5, wrong: -1, blank: 0, color: COLORS[(i + k * 2) % COLORS.length] }; q += cnt; return sct; });
+      e.nQ = q - 1; e.key = Array.from({ length: e.nQ }, () => LET[Math.floor(Math.random() * 5)]);
+      e.roster = '100001, Ana Quispe\n100002, Luis Mamani\n100003, Rosa Huamán';
+    }
+    Store.put('exam', e);
+    g.exams.push(e.id);
+  }
+  S.groups[g.id] = g; Store.put('grp', g);
+  return g;
+}
+const groupExams = g => g.exams.map(id => S.exams[id]).filter(Boolean);
+const n20 = (sc, mx) => mx > 0 ? Math.max(0, sc) / mx * 20 : 0;
+const normName = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+// Junta a cada estudiante en las 3 evaluaciones (por código; si no tiene, por nombre)
+function uniRows(g) {
+  const exs = groupExams(g), K = exs.length, map = new Map();
+  exs.forEach((ex, k) => {
+    rowsFor(ex).forEach(x => {
+      const code = (x.r.studentId || '').includes('?') ? '' : (x.r.studentId || '');
+      const key = code ? 'c:' + code : (x.r.name ? 'n:' + normName(x.r.name) : 'r:' + x.r.id);
+      if (!map.has(key)) map.set(key, { key, code, name: '', per: Array.from({ length: K }, () => ({ in: false, nota: 0, score: 0, eff: 0 })) });
+      const st = map.get(key);
+      if (x.r.name && !st.name) st.name = x.r.name;
+      st.per[k] = { in: true, nota: n20(x.g.T.score, x.g.T.max), score: x.g.T.score, eff: x.g.T.n ? x.g.T.c / x.g.T.n : 0, rid: x.r.id };
+    });
+  });
+  const list = [...map.values()].map(st => {
+    const notaFinal = st.per.reduce((a, p) => a + p.nota, 0) / (K || 1), acum = st.per.reduce((a, p) => a + p.score, 0);
+    return { ...st, display: st.name || (st.code ? 'Código ' + st.code : 'Sin nombre'), notaFinal, scoreAcum: acum, scoreFinal: acum / (K || 1), rendidas: st.per.filter(p => p.in).length };
+  });
+  return list.sort((a, b) => b.notaFinal - a.notaFinal || b.scoreAcum - a.scoreAcum || a.display.localeCompare(b.display));
+}
+function uniData(g) {
+  const exs = groupExams(g), rows = uniRows(g);
+  const Ds = exs.map(ex => { const d = excelData(ex); return d.students.length ? d : null; });
+  // valor que se busca en cada hoja de evaluación (código o nombre tal como aparece allí)
+  const students = rows.map(st => ({ ...st, per: st.per.map((p, k) => {
+    if (!p.in || !Ds[k]) return { ...p, in: false };
+    const ds = Ds[k].students.find(x => x.rid === p.rid);
+    return { ...p, byCode: !!(ds && ds.code), lookup: ds ? (ds.code || ds.display) : '' };
+  }) }));
+  const seen = {}; students.forEach(s => { if (seen[s.display]) s.display += ` (${s.code || seen[s.display]})`; seen[s.display] = (seen[s.display] || 0) + 1; });
+  return { name: g.name, date: new Date().toLocaleDateString('es-PE'), pass20: +g.pass || 11, maxAcum: exs.reduce((a, ex) => a + grade(ex, []).T.max, 0),
+    evals: exs.map((ex, k) => ({ label: ex.name, D: Ds[k] })), students };
+}
+
 function secOf(ex, n) { for (const s of ex.sections) if (n >= +s.from && n <= +s.to) return s; return GEN; }
 function ptsOf(ex, i) { const o = ex.ptsOv[i]; return (o !== undefined && o !== null && o !== '') ? +o : +secOf(ex, i + 1).pts; }
 
@@ -1527,9 +1876,127 @@ function grade(ex, answers) {
   return { T, secs, per };
 }
 const passes = (ex, note) => ex.scale > 0 ? note >= +ex.pass : true;
+/* ===== Importar base de datos de alumnos (Excel .xlsx o CSV) con encabezados DNI y Nombre ===== */
+async function unzipXlsx(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf), dec = new TextDecoder();
+  let e = buf.byteLength - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('zip');
+  const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const out = {};
+  for (let i = 0; i < n; i++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+    p += 46 + nl + xl + cl;
+    if (!/^xl\/(sharedStrings\.xml|workbook\.xml|_rels\/workbook\.xml\.rels|worksheets\/[^/]+\.xml)$/.test(name)) continue;
+    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true), data = u8.slice(start, start + csize);
+    out[name] = method === 0 ? dec.decode(data) : dec.decode(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
+  return out;
+}
+async function readXlsxRows(buf) {
+  const f = await unzipXlsx(buf), P = x => new DOMParser().parseFromString(x, 'application/xml');
+  const shared = f['xl/sharedStrings.xml'] ? [...P(f['xl/sharedStrings.xml']).getElementsByTagName('si')].map(si => [...si.getElementsByTagName('t')].map(t => t.textContent).join('')) : [];
+  // primera hoja del libro
+  let path = null;
+  if (f['xl/workbook.xml'] && f['xl/_rels/workbook.xml.rels']) {
+    const sh = P(f['xl/workbook.xml']).getElementsByTagName('sheet')[0];
+    const rid = sh && (sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'));
+    const rel = [...P(f['xl/_rels/workbook.xml.rels']).getElementsByTagName('Relationship')].find(r => r.getAttribute('Id') === rid);
+    if (rel) path = 'xl/' + rel.getAttribute('Target').replace(/^\/?xl\//, '').replace(/^\//, '');
+  }
+  if (!path || !f[path]) path = Object.keys(f).filter(k => k.startsWith('xl/worksheets/')).sort()[0];
+  if (!path) throw new Error('hoja');
+  const rows = [];
+  for (const row of P(f[path]).getElementsByTagName('row')) {
+    const cells = [];
+    for (const c of row.getElementsByTagName('c')) {
+      const r = c.getAttribute('r') || '', letters = (r.match(/^[A-Z]+/) || ['A'])[0];
+      let ci = 0; for (const ch of letters) ci = ci * 26 + ch.charCodeAt(0) - 64; ci--;
+      const t = c.getAttribute('t'), v = c.getElementsByTagName('v')[0];
+      let val = '';
+      if (t === 's') val = shared[+(v && v.textContent)] ?? '';
+      else if (t === 'inlineStr') val = [...c.getElementsByTagName('t')].map(x => x.textContent).join('');
+      else val = v ? v.textContent : '';
+      cells[ci] = val;
+    }
+    rows.push(Array.from(cells, x => x ?? ''));
+  }
+  return rows;
+}
+function readCsvRows(text) {
+  text = text.replace(/^\ufeff/, '');
+  const first = text.split(/\r?\n/)[0] || '', d = [';', '\t', ','].sort((a, b) => first.split(b).length - first.split(a).length)[0];
+  const rows = []; let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) { if (ch === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') inQ = false; else cur += ch; continue; }
+    if (ch === '"') inQ = true; else if (ch === d) { row.push(cur); cur = ''; } else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; } else if (ch !== '\r') cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+// Convierte filas en alumnos: busca los encabezados DNI y Nombre (o Apellidos + Nombres)
+function rowsToStudents(rows) {
+  const low = v => normName(v);
+  let hi = -1, cDni = -1, cName = -1, cApe = -1, cNom = -1;
+  for (let i = 0; i < Math.min(rows.length, 15) && hi < 0; i++) {
+    const r = rows[i].map(low);
+    const d = r.findIndex(x => /^(dni|documento|nro\.? ?documento|n° ?dni|codigo|cod\.?|id)$/.test(x) || /\bdni\b/.test(x));
+    const nm = r.findIndex(x => /^(nombre|nombres y apellidos|apellidos y nombres|nombre completo|alumno|estudiante)s?$/.test(x));
+    const ap = r.findIndex(x => /^apellidos?$/.test(x)), no = r.findIndex(x => /^nombres?$/.test(x));
+    if (d >= 0 && (nm >= 0 || no >= 0)) { hi = i; cDni = d; cName = nm; cApe = ap; cNom = no; }
+  }
+  if (hi < 0) return { err: 'No encontré los encabezados. La primera fila debe decir "DNI" y "Nombre".' };
+  const list = [], seen = new Set();
+  for (const r of rows.slice(hi + 1)) {
+    let dni = String(r[cDni] ?? '').trim().replace(/\.0+$/, '').replace(/\s/g, '');
+    const name = (cApe >= 0 && cNom >= 0 && cApe !== cName ? `${String(r[cApe] ?? '').trim()} ${String(r[cNom] ?? '').trim()}` : String(r[cName >= 0 ? cName : cNom] ?? '')).replace(/\s+/g, ' ').trim();
+    if (!dni && !name) continue;
+    if (!/^\d+$/.test(dni) || !name) { list.push({ bad: true, dni, name }); continue; }
+    if (dni.length === 7) dni = '0' + dni; // Excel quita el 0 inicial de algunos DNI
+    if (seen.has(dni)) continue; seen.add(dni);
+    list.push({ dni, name: name.replace(/[,;\t]/g, ' ').replace(/\s+/g, ' ') });
+  }
+  return { list };
+}
+async function importStudents(file, exams) {
+  let rows;
+  try {
+    if (/\.xlsx$/i.test(file.name)) rows = await readXlsxRows(await file.arrayBuffer());
+    else if (/\.(csv|txt)$/i.test(file.name)) rows = readCsvRows(await file.text());
+    else { toast('Usa un archivo Excel (.xlsx) o CSV. Si es .xls, guárdalo como .xlsx.'); return; }
+  } catch (e) { console.error(e); toast('No se pudo leer el archivo. Guárdalo como .xlsx o .csv e inténtalo otra vez.'); return; }
+  const r = rowsToStudents(rows);
+  if (r.err) { toast(r.err); return; }
+  const ok = r.list.filter(x => !x.bad), bad = r.list.filter(x => x.bad);
+  if (!ok.length) { toast('No encontré alumnos con DNI y nombre en el archivo.'); return; }
+  // se combina con la lista actual: agrega nuevos y actualiza los nombres de los que ya estaban
+  const cur = rosterMap(exams[0]); let added = 0, upd = 0;
+  ok.forEach(x => { if (cur[x.dni] === undefined) added++; else if (cur[x.dni] !== x.name) upd++; cur[x.dni] = x.name; });
+  const text = Object.entries(cur).map(([k, v]) => `${k}, ${v}`).join('\n');
+  const maxLen = Math.max(...ok.map(x => x.dni.length));
+  exams.forEach(ex => { ex.roster = text; });
+  const short = exams.filter(ex => ex.idDigits < maxLen);
+  if (short.length && confirm(`Los DNI tienen ${maxLen} dígitos, pero la hoja tiene espacio para ${short[0].idDigits}. ¿Cambiar el código de la hoja a ${maxLen} dígitos?\n\nSi ya imprimiste hojas de esta evaluación, tendrás que imprimirlas de nuevo.`)) {
+    short.forEach(ex => { ex.idDigits = maxLen; });
+  }
+  exams.forEach(ex => Store.put('exam', ex));
+  render();
+  const pl = (n, a, b) => `${n} ${n === 1 ? a : b}`;
+  toast(`${pl(added, 'alumno agregado', 'alumnos agregados')}${upd ? `, ${pl(upd, 'actualizado', 'actualizados')}` : ''}${bad.length ? `. ${pl(bad.length, 'fila omitida', 'filas omitidas')} (sin DNI numérico o sin nombre)` : ''}.`);
+}
+async function rosterTemplate() {
+  const B = new XL.Book(), sh = B.sheet('Alumnos');
+  const th = { font: { b: true, color: 'FFFFFF' }, fill: '23272B', align: { h: 'center' } };
+  sh.set(0, 0, 'DNI', th); sh.set(0, 1, 'Nombre', th);
+  [['70123456', 'Quispe Mamani Ana'], ['70987654', 'Huamán Torres Luis']].forEach(([d, n], i) => { sh.set(i + 1, 0, d, { num: '@' }); sh.set(i + 1, 1, n); });
+  sh.width(0, 14); sh.width(1, 40); sh.freeze = { r: 1, c: 0 };
+  await saveFile('plantilla-alumnos.xlsx', new Blob([B.build({ title: 'Plantilla de alumnos' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+}
+
 function rosterMap(ex) {
   const m = {};
-  (ex.roster || '').split(/\n/).forEach(l => { const p = l.split(/[,;\t]/); if (p.length >= 2 && p[0].trim()) m[p[0].trim()] = p.slice(1).join(' ').trim(); });
+  (ex.roster || '').split(/\n/).forEach(l => { const p = l.match(/^\s*([^,;\t]+)[,;\t](.*)$/); if (p && p[1].trim()) m[p[1].trim()] = p[2].trim(); });
   return m;
 }
 function scaleLabel(ex) { return ex.scale > 0 ? '/' + ex.scale : 'pts'; }
@@ -1555,7 +2022,7 @@ function sheetSVG(ex, fill) {
   // Código del alumno
   if (L.idDigits > 0) {
     const b = L.idBox;
-    o.push(`<text x="${b.x}" y="${b.y - 6}" font-size="14" font-weight="700" fill="#000">Código del alumno</text>`);
+    o.push(`<text x="${b.x}" y="${b.y - 6}" font-size="14" font-weight="700" fill="#000">DNI / código del alumno</text>`);
     o.push(`<rect x="${b.x + p * 0.86}" y="${b.y}" width="${b.w - p * 0.86 + 2}" height="${b.h}" fill="none" stroke="#9a9a9a" stroke-width="1"/>`);
     L.idWrite.forEach((w, d) => {
       o.push(`<rect x="${w.x}" y="${w.y}" width="${w.w}" height="${w.h}" fill="none" stroke="#8a8a8a"/>`);
@@ -1836,7 +2303,8 @@ function render() {
   if (Auth.session.mustChange) { app.innerHTML = changePwView(true); return; }
   if (S.page === 'password') { app.innerHTML = topBar(null) + `<main><div class="wrap">${changePwView(false)}</div></main>`; return; }
   if (S.page === 'users' && Auth.isAdmin()) { Cam.stop(); app.innerHTML = topBar(null) + `<main><div class="wrap">${usersView()}</div></main>`; return; }
-  app.innerHTML = topBar(ex) + `<main><div class="wrap">${ex ? examView(ex) : homeView()}</div></main>` + (S.detail && S.results[S.detail] ? detailView() : '');
+  const g = !ex && S.grp ? S.groups[S.grp] : null;
+  app.innerHTML = topBar(ex, g) + `<main><div class="wrap">${ex ? examView(ex) : g ? groupView(g) : homeView()}</div></main>` + (S.detail && S.results[S.detail] ? detailView() : '');
   if (ex && S.tab === 'scan' && Cam.stream) { const v = $('#vid'); if (v) { v.srcObject = Cam.stream; v.play().catch(() => { }); } }
   if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
   window.scrollTo(0, keepScroll);
@@ -1859,7 +2327,8 @@ const ICONS = {
 const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 const isDark = () => S.theme ? S.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
 
-function topBar(ex) {
+function topBar(ex, grp) {
+  const exG = ex && ex.groupId ? S.groups[ex.groupId] : null;
   const tabs = [['config', S.view === 'movil' ? 'Ajustes' : 'Configurar'], ['sheet', 'Hoja'], ['scan', 'Escanear'], ['results', 'Resultados'], ['stats', 'Análisis']];
   const nextView = S.view === 'movil' ? 'pc' : 'movil';
   const tools = `<div class="tools">
@@ -1870,7 +2339,8 @@ function topBar(ex) {
       <button class="icon-btn" data-act="logout" title="Cerrar sesión" aria-label="Cerrar sesión">${icon('logout')}<span>Salir</span></button>
     </div>`;
   return `<header class="top"><div class="wrap">
-    ${S.page ? `<button class="crumb" data-act="page" data-p="" aria-label="Volver">‹ ${S.view === 'movil' ? '' : 'Volver'}</button><div class="title">${S.page === 'users' ? 'Usuarios' : 'Mi contraseña'}</div>` : ex ? `<button class="crumb" data-act="home" aria-label="Volver a evaluaciones">‹ ${S.view === 'movil' ? '' : 'Evaluaciones'}</button><div class="title">${esc(ex.name)}</div>`
+    ${S.page ? `<button class="crumb" data-act="page" data-p="" aria-label="Volver">‹ ${S.view === 'movil' ? '' : 'Volver'}</button><div class="title">${S.page === 'users' ? 'Usuarios' : 'Mi contraseña'}</div>` : ex ? (exG ? `<button class="crumb" data-act="togrp" data-id="${exG.id}" aria-label="Volver al simulacro">‹ ${S.view === 'movil' ? '' : esc(exG.name)}</button><div class="title">E${(ex.groupIdx || 0) + 1} · ${esc(ex.name)}</div>` : `<button class="crumb" data-act="home" aria-label="Volver a evaluaciones">‹ ${S.view === 'movil' ? '' : 'Evaluaciones'}</button><div class="title">${esc(ex.name)}</div>`)
+      : grp ? `<button class="crumb" data-act="home" aria-label="Volver a evaluaciones">‹ ${S.view === 'movil' ? '' : 'Evaluaciones'}</button><div class="title">${esc(grp.name)} <span class="type-badge uni" style="vertical-align:middle">UNI</span></div>`
       : `<div class="brand"><span class="brand-dot"></span>Lector de cartillas</div><div class="title"></div>`}
     <span class="sync">${S.synced ? 'Guardado en tu cuenta' : 'Guardado en este navegador'}</span>
     ${tools}
@@ -1893,27 +2363,95 @@ function applyPrefs() {
 }
 
 function homeView() {
-  const exams = Object.values(S.exams).sort((a, b) => b.created - a.created);
+  const exams = Object.values(S.exams).filter(ex => !ex.groupId).sort((a, b) => b.created - a.created);
+  const groups = Object.values(S.groups).sort((a, b) => b.created - a.created);
   const cards = exams.map(ex => {
     const rs = examResults(ex);
     const avg = rs.length ? rs.reduce((a, r) => a + grade(ex, r.answers).T.note, 0) / rs.length : null;
     return `<button class="exam-card" data-act="open" data-id="${ex.id}">
+      <span class="type-badge">Individual</span>
       <h3>${esc(ex.name)}</h3>
       <div class="small muted">${ex.nQ} preguntas, ${ex.sections.length || 'sin'} curso${ex.sections.length === 1 ? '' : 's'}</div>
       <div class="stats"><span><b>${rs.length}</b>hojas</span><span><b>${avg == null ? '–' : fmt(avg)}</b>promedio</span><span><b>${ex.key.filter(Boolean).length}</b>con clave</span></div>
     </button>`;
-  }).join('');
+  });
+  const gcards = groups.map(g => {
+    const exs = groupExams(g), rows = uniRows(g);
+    const avg = rows.length ? rows.reduce((a, r) => a + r.notaFinal, 0) / rows.length : null;
+    return `<button class="exam-card uni" data-act="opengrp" data-id="${g.id}">
+      <span class="type-badge uni">Estilo UNI · 3 evaluaciones</span>
+      <h3>${esc(g.name)}</h3>
+      <div class="uni-dots">${exs.map((ex, k) => `<span style="--c:${UNI_C[k]}">E${k + 1} · ${examResults(ex).length}</span>`).join('')}</div>
+      <div class="stats"><span><b>${rows.length}</b>estudiantes</span><span><b>${avg == null ? '–' : fmt(avg)}</b>nota final prom.</span></div>
+    </button>`;
+  });
+  const all = [...gcards, ...cards];
   return `<div class="row" style="justify-content:space-between">
       <h2>Evaluaciones</h2>
-      <div class="row"><button class="btn primary" data-act="new">Nueva evaluación</button><button class="btn" data-act="example">Crear ejemplo</button></div>
+      <div class="row"><button class="btn primary" data-act="new">Nueva evaluación</button><button class="btn" data-act="example">Ejemplo individual</button><button class="btn" data-act="exampleuni">Ejemplo UNI</button></div>
     </div>
-    ${exams.length ? `<div class="exam-list">${cards}</div>` : `<div class="panel empty"><h2>Empieza con una evaluación</h2>
-      <p class="muted">Define cuántas preguntas tiene, qué curso va en cada tramo y cuánto vale cada pregunta. Luego imprime la hoja y escanéala con la cámara.</p>
-      <div class="row" style="justify-content:center"><button class="btn primary" data-act="new">Nueva evaluación</button><button class="btn" data-act="example">Crear ejemplo con 5 cursos</button></div></div>`}
+    ${S.chooseType ? `<div class="panel choose"><h3>¿Qué tipo de evaluación?</h3>
+      <div class="choose-grid">
+        <button class="choose-card" data-act="newind"><b>Evaluación individual</b><span>Un examen con su clave, cursos y puntaje. Resultados y Excel de ese examen.</span></button>
+        <button class="choose-card uni" data-act="newuni"><b>Estilo UNI</b><span>3 evaluaciones que se rinden por separado y se promedian en una nota final, con puntaje acumulado y ranking.</span></button>
+      </div><button class="btn ghost sm" data-act="canceltype" style="margin-top:10px">Cancelar</button></div>` : ''}
+    ${all.length ? `<div class="exam-list">${all.join('')}</div>` : `<div class="panel empty"><h2>Empieza con una evaluación</h2>
+      <p class="muted">Elige una evaluación individual o una estilo UNI de 3 evaluaciones. Define cuántas preguntas tiene, qué curso va en cada tramo y cuánto vale cada pregunta. Luego imprime la hoja y escanéala con la cámara.</p>
+      <div class="row" style="justify-content:center"><button class="btn primary" data-act="new">Nueva evaluación</button><button class="btn" data-act="example">Ejemplo individual</button><button class="btn" data-act="exampleuni">Ejemplo UNI</button></div></div>`}
     <div class="panel" style="margin-top:22px"><h3>Respaldo</h3>
       <p class="muted small">Guarda todas tus evaluaciones y resultados en un archivo, o recupéralos en otro equipo.</p>
       <div class="row"><button class="btn sm" data-act="backup">Descargar respaldo</button>
       <label class="btn sm">Importar respaldo<input type="file" accept=".json,application/json" id="impFile" class="hidden"></label></div></div>`;
+}
+
+const UNI_C = ['#2F6FDE', '#C2410C', '#8E44AD'];
+function groupView(g) {
+  const exs = groupExams(g), rows = uniRows(g), K = exs.length, pass = +g.pass || 11;
+  const q = (S.gq || '').toLowerCase();
+  const list = rows.filter(r => !q || r.display.toLowerCase().includes(q) || (r.code || '').includes(q));
+  const avg = rows.length ? rows.reduce((a, r) => a + r.notaFinal, 0) / rows.length : 0;
+  const nPass = rows.filter(r => r.notaFinal >= pass).length, full = rows.filter(r => r.rendidas === K).length;
+  const cards = exs.map((ex, k) => {
+    const rs = examResults(ex), av = rs.length ? rs.reduce((a, r) => { const t = grade(ex, r.answers).T; return a + n20(t.score, t.max); }, 0) / rs.length : null;
+    const keyN = ex.key.filter(Boolean).length;
+    return `<div class="uni-card" style="--c:${UNI_C[k]}">
+      <div class="uni-num">E${k + 1}</div>
+      <input type="text" value="${esc(ex.name)}" data-exname="${ex.id}" id="exn${k}" aria-label="Nombre de la evaluación ${k + 1}" class="uni-name">
+      <div class="small muted">${ex.nQ} preguntas · ${ex.sections.length || 'sin'} cursos · clave ${keyN}/${ex.nQ}</div>
+      <div class="stats"><span><b>${rs.length}</b>hojas</span><span><b>${av == null ? '–' : fmt(av)}</b>promedio /20</span></div>
+      ${keyN < ex.nQ ? `<div class="small" style="color:var(--warn);font-weight:700">Falta completar la clave</div>` : ''}
+      <button class="btn primary sm" data-act="open" data-id="${ex.id}">Abrir: configurar, hoja y escanear</button>
+    </div>`;
+  }).join('');
+  const table = list.map((r, i) => `<tr data-act="uniDetail" data-key="${esc(r.key)}">
+    <td class="muted">${rows.indexOf(r) + 1}</td><td>${esc(r.code || '—')}</td><td><b>${esc(r.display)}</b>${r.rendidas < K ? ` <span class="st warn">rindió ${r.rendidas}/${K}</span>` : ''}</td>
+    ${r.per.map((p, k) => `<td>${p.in ? `<span class="eff-cell" style="background:${heat(p.nota / 20)};color:#fff">${fmt(p.nota)}</span>` : '<span class="muted small">no rindió</span>'}</td>`).join('')}
+    <td class="note-cell ${r.notaFinal >= pass ? 'pass' : 'fail'}">${r.notaFinal.toFixed(2)}</td>
+    <td>${fmt(r.scoreAcum)}</td><td>${r.scoreFinal.toFixed(2)}</td>
+    <td>${r.notaFinal >= pass ? '<span class="st ok">Aprobado</span>' : '<span class="st bad">Desaprobado</span>'}</td></tr>`).join('');
+  return `<div class="panel"><div class="row" style="justify-content:space-between;align-items:flex-end">
+      <label class="f" style="flex:1;min-width:220px">Nombre del simulacro UNI<input type="text" id="grpName" value="${esc(g.name)}" data-grp="name"></label>
+      <label class="f" style="width:150px">Nota aprobatoria<input type="number" id="grpPass" step="any" value="${pass}" data-grp="pass"></label></div>
+    <p class="muted small" style="margin-bottom:0">Cada evaluación se configura, se imprime y se escanea por separado. La <b>nota final</b> es el promedio de las ${K} notas (0 a 20); si un estudiante no rinde una, esa nota cuenta como 0. Las notas se juntan por el <b>código</b> del alumno: que marque el mismo en las ${K} hojas.</p></div>
+    <div class="uni-grid">${cards}</div>
+    <div class="panel"><h3>Alumnos (para las ${K} evaluaciones)</h3>
+      <p class="muted small">Una línea por alumno: DNI, nombre. Se aplica a las ${K} evaluaciones. Al escanear, el nombre se completa solo según el DNI marcado en la hoja.</p>
+      <div class="row" style="margin-bottom:8px"><label class="btn sm primary">Importar alumnos (Excel o CSV)<input type="file" accept=".xlsx,.csv,.txt" data-import="grp" class="hidden"></label><button class="btn sm" data-act="rostertpl">Descargar plantilla</button><span class="small muted">Encabezados: <b>DNI</b> y <b>Nombre</b></span></div>
+      <textarea id="grpRoster" data-grp="roster" placeholder="70123456, Quispe Mamani Ana">${esc(exs[0] ? exs[0].roster : '')}</textarea></div>
+    <div class="panel"><div class="row" style="justify-content:space-between">
+        <h3>Resultados finales</h3>
+        <div class="row"><button class="btn primary" data-act="uniexcel">Exportar Excel UNI</button></div></div>
+      ${rows.length ? `<div class="kpis" style="margin-top:12px">
+        <div class="kpi"><b>${rows.length}</b><span>estudiantes · ${full} rindieron las ${K}</span></div>
+        <div class="kpi"><b>${avg.toFixed(2)}</b><span>nota final promedio /20</span></div>
+        <div class="kpi"><b>${nPass}</b><span>aprobados (${pct(nPass / rows.length)})</span></div>
+        <div class="kpi"><b>${rows[0].notaFinal.toFixed(2)}</b><span>primer puesto: ${esc(rows[0].display)}</span></div></div>
+      <input type="text" id="gsearch" placeholder="Buscar por nombre o código" value="${esc(S.gq || '')}" style="max-width:300px">
+      <div class="scroll-x" style="margin-top:10px"><table class="res"><thead><tr><th>#</th><th>Código</th><th>Estudiante</th>${exs.map((ex, k) => `<th style="color:${UNI_C[k]}">E${k + 1}</th>`).join('')}<th>Nota final</th><th>Puntaje acum.</th><th>Puntaje final</th><th>Estado</th></tr></thead><tbody>${table}</tbody></table></div>
+      <p class="muted small">Toca un estudiante para ver sus hojas. Puntaje acumulado = suma de los ${K} puntajes; puntaje final = su promedio.</p>`
+      : `<p class="muted">Aún no hay hojas escaneadas. Abre cada evaluación, configúrala, imprime su hoja y escanea.</p>`}
+    </div>
+    ${Auth.isAdmin() ? `<div class="row"><button class="btn danger" data-act="delgrp">Eliminar simulacro UNI</button></div>` : ''}`;
 }
 
 function examView(ex) {
@@ -1990,8 +2528,10 @@ function configView(ex) {
   </div>
 
   <div class="panel"><h3>Alumnos</h3>
-    <p class="muted small">Una línea por alumno: código, nombre. Al escanear, el nombre se completa solo según el código marcado.</p>
-    <textarea id="roster" data-ex="roster" placeholder="100001, Ana Quispe">${esc(ex.roster)}</textarea>
+    <p class="muted small">Una línea por alumno: DNI, nombre. Al escanear, el nombre se completa solo según el DNI que el alumno marcó en la hoja.</p>
+    <div class="row" style="margin-bottom:8px"><label class="btn sm primary">Importar alumnos (Excel o CSV)<input type="file" accept=".xlsx,.csv,.txt" data-import="ex" class="hidden"></label><button class="btn sm" data-act="rostertpl">Descargar plantilla</button><span class="small muted">Encabezados: <b>DNI</b> y <b>Nombre</b></span></div>
+    <textarea id="roster" data-ex="roster" placeholder="70123456, Quispe Mamani Ana">${esc(ex.roster)}</textarea>
+    <p class="muted small" style="margin-bottom:0">${Object.keys(rosterMap(ex)).length} alumnos en la lista.</p>
   </div>
 
   <div class="panel"><h3>Lectura</h3>
@@ -2002,7 +2542,7 @@ function configView(ex) {
     </div>
     <p class="muted small">Baja el relleno mínimo si el lápiz es tenue; súbelo si los borrones cuentan como marca.</p>
   </div>
-  ${Auth.isAdmin() ? `<div class="row"><button class="btn danger" data-act="delexam">Eliminar evaluación</button></div>` : ''}`;
+  ${ex.groupId ? `<p class="muted small">Esta evaluación es la E${(ex.groupIdx || 0) + 1} de un simulacro UNI. Para borrarla, elimina el simulacro completo.</p>` : Auth.isAdmin() ? `<div class="row"><button class="btn danger" data-act="delexam">Eliminar evaluación</button></div>` : ''}`;
 }
 
 function sheetView(ex) {
@@ -2244,7 +2784,7 @@ function excelData(ex) {
     let display = (x.r.name || '').trim() || (x.r.studentId ? `Código ${x.r.studentId}` : `Hoja ${i + 1}`);
     if (seen[display]) display += ` (${x.r.studentId || i + 1})`;
     seen[display] = 1;
-    return { code: x.r.studentId || '', name: x.r.name || '', display, score: x.g.T.score, max: x.g.T.max, c: x.g.T.c, w: x.g.T.w, b: x.g.T.b, n: x.g.T.n,
+    return { rid: x.r.id, code: (x.r.studentId || '').includes('?') ? '' : (x.r.studentId || ''), name: x.r.name || '', display, score: x.g.T.score, max: x.g.T.max, c: x.g.T.c, w: x.g.T.w, b: x.g.T.b, n: x.g.T.n,
       secs: x.g.secs.map(s => ({ score: s.score, max: s.max, c: s.c, w: s.w, b: s.b, n: s.n })) };
   });
   const n = rows.length;
@@ -2275,7 +2815,7 @@ document.addEventListener('click', async e => {
   if (act === 'closebg' && e.target !== el) return;
   switch (act) {
     case 'login': return doLogin();
-    case 'logout': S.page = ''; S.cur = null; S.detail = null; Auth.logout(); break;
+    case 'logout': S.page = ''; S.cur = null; S.grp = null; S.detail = null; Auth.logout(); break;
     case 'page': S.authErr = ''; S.page = el.dataset.p; if (S.page) { Cam.stop(); S.detail = null; } render(); window.scrollTo(0, 0); break;
     case 'savepw': {
       const cur = $('#pwCur').value, n1 = $('#pwNew').value, n2 = $('#pwNew2').value;
@@ -2297,8 +2837,33 @@ document.addEventListener('click', async e => {
     case 'utoggle': { const err = Auth.toggle(el.dataset.u); if (err) toast(err); render(); break; }
     case 'udel': if (confirm(`¿Eliminar la cuenta "${el.dataset.u}"? Sus datos de evaluaciones en su navegador no se borran.`)) { const err = Auth.remove(el.dataset.u); if (err) toast(err); render(); } break;
     case 'uexport': saveFile('usuarios.json', Auth.exportJson()); break;
-    case 'home': Cam.stop(); S.cur = null; S.detail = null; render(); break;
-    case 'new': { const n = newExam(false); S.cur = n.id; S.tab = 'config'; render(); break; }
+    case 'home': Cam.stop(); S.cur = null; S.grp = null; S.detail = null; S.chooseType = false; render(); break;
+    case 'togrp': Cam.stop(); S.cur = null; S.grp = el.dataset.id; S.detail = null; render(); window.scrollTo(0, 0); break;
+    case 'opengrp': S.grp = el.dataset.id; S.cur = null; S.gq = ''; render(); window.scrollTo(0, 0); break;
+    case 'newind': { S.chooseType = false; const n = newExam(false); S.cur = n.id; S.tab = 'config'; render(); break; }
+    case 'newuni': { S.chooseType = false; const g = newGroup(false); S.grp = g.id; S.cur = null; render(); toast('Simulacro UNI creado: configura cada una de las 3 evaluaciones.'); break; }
+    case 'canceltype': S.chooseType = false; render(); break;
+    case 'exampleuni': { const g = newGroup(true); S.grp = g.id; S.cur = null; render(); toast('Ejemplo UNI creado con claves al azar. Abre cada evaluación y prueba "hoja simulada".'); break; }
+    case 'uniDetail': { const g = S.groups[S.grp], r = uniRows(g).find(x => x.key === el.dataset.key); const p = r && r.per.find(x => x.in); if (p) { S.detail = p.rid; S.detView = 'img'; render(); } break; }
+    case 'uniexcel': {
+      const g = S.groups[S.grp];
+      try {
+        const data = uniData(g);
+        if (!data.students.length) { toast('Todavía no hay hojas escaneadas en este simulacro.'); break; }
+        const bytes = buildUniReport(data);
+        await saveFile(`resultados-uni-${slug(g.name)}.xlsx`, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      } catch (err) { console.error(err); toast('No se pudo crear el Excel.'); }
+      break;
+    }
+    case 'delgrp': {
+      if (!Auth.isAdmin()) break;
+      const g = S.groups[S.grp];
+      if (confirm(`¿Eliminar "${g.name}" con sus 3 evaluaciones y todas sus hojas escaneadas?`)) {
+        groupExams(g).forEach(ex => { examResults(ex).forEach(r => { delete S.results[r.id]; Store.del('res', r.id); }); delete S.exams[ex.id]; Store.del('exam', ex.id); });
+        delete S.groups[g.id]; Store.del('grp', g.id); S.grp = null; render();
+      } break;
+    }
+    case 'new': S.chooseType = true; render(); break;
     case 'example': { const n = newExam(true); S.cur = n.id; S.tab = 'config'; render(); toast('Ejemplo creado con clave al azar. Prueba "Escanear" → hoja simulada.'); break; }
     case 'open': S.cur = el.dataset.id; S.tab = 'config'; S.log = []; S.item = null; render(); break;
     case 'tab': S.camResult = null; if (el.dataset.tab !== 'scan') Cam.stop(); S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); break;
@@ -2323,7 +2888,7 @@ document.addEventListener('click', async e => {
     }
     case 'clearkey': if (confirm('¿Borrar toda la clave?')) { ex.key = Array(ex.nQ).fill(''); Store.put('exam', ex); render(); } break;
     case 'delexam':
-      if (!Auth.isAdmin()) { toast('Solo el administrador puede eliminar evaluaciones.'); break; }
+      if (!Auth.isAdmin() || ex.groupId) { toast('Solo el administrador puede eliminar evaluaciones.'); break; }
       if (confirm(`¿Eliminar "${ex.name}" y todas sus hojas escaneadas?`)) {
         examResults(ex).forEach(r => { delete S.results[r.id]; Store.del('res', r.id); });
         delete S.exams[ex.id]; Store.del('exam', ex.id); S.cur = null; render();
@@ -2380,25 +2945,39 @@ document.addEventListener('click', async e => {
     }
     case 'view': S.view = S.view === 'movil' ? 'pc' : 'movil'; Prefs.set('view', S.view); applyPrefs(); render(); window.scrollTo(0, 0); toast(S.view === 'movil' ? 'Formato celular' : 'Formato PC'); break;
     case 'theme': S.theme = isDark() ? 'light' : 'dark'; Prefs.set('theme', S.theme); applyPrefs(); render(); break;
-    case 'backup': saveFile('respaldo-cartillas.json', JSON.stringify({ app: 'lector-cartillas', v: 1, exams: S.exams, results: S.results })); break;
+    case 'rostertpl': rosterTemplate(); break;
+    case 'backup': saveFile('respaldo-cartillas.json', JSON.stringify({ app: 'lector-cartillas', v: 2, groups: S.groups, exams: S.exams, results: S.results })); break;
   }
 });
 const slug = s => (s || 'evaluacion').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'evaluacion';
 
 document.addEventListener('change', async e => {
   const t = e.target, ex = curExam();
+  if (t.dataset.grp !== undefined && S.grp) {
+    const g = S.groups[S.grp];
+    if (t.dataset.grp === 'roster') { groupExams(g).forEach(ex => { ex.roster = t.value; Store.put('exam', ex); }); toast('Lista aplicada a las 3 evaluaciones'); }
+    else { g[t.dataset.grp] = t.dataset.grp === 'pass' ? +t.value : t.value; Store.put('grp', g); }
+    render(); return;
+  }
+  if (t.dataset.exname) { const ex = S.exams[t.dataset.exname]; ex.name = t.value || ex.name; Store.put('exam', ex); render(); return; }
   if (t.dataset.role) { const err = Auth.setRole(t.dataset.role, t.value); if (err) toast(err); render(); return; }
   if (t.id === 'autoCap') { Cam.auto = t.checked; return; }
   if (t.id === 'sortSel') { const k = t.value; S.sort = { k, d: (k === 'name' || k === 'id') ? 1 : -1 }; render(); return; }
   if (t.id === 'perPage') { ex.perPage = +t.value; Store.put('exam', ex); render(); return; }
   if (t.id === 'autoThr') { ex.autoThr = t.checked; Store.put('exam', ex); render(); return; }
   if (t.id === 'camFile' || t.id === 'galFile') { const f = [...t.files]; t.value = ''; await processFiles(f); return; }
+  if (t.dataset.import) {
+    const f = t.files[0]; t.value = ''; if (!f) return;
+    const target = t.dataset.import === 'grp' && S.grp ? groupExams(S.groups[S.grp]) : [curExam()];
+    await importStudents(f, target.filter(Boolean)); return;
+  }
   if (t.id === 'impFile') {
     const f = t.files[0]; if (!f) return;
     try {
       const j = JSON.parse(await f.text());
       Object.values(j.exams || {}).forEach(x => { S.exams[x.id] = x; Store.put('exam', x); });
       Object.values(j.results || {}).forEach(x => { S.results[x.id] = x; Store.put('res', x); });
+      Object.values(j.groups || {}).forEach(x => { S.groups[x.id] = x; Store.put('grp', x); });
       toast('Respaldo importado'); render();
     } catch (err) { toast('Ese archivo no es un respaldo válido.'); }
     return;
@@ -2428,6 +3007,7 @@ document.addEventListener('change', async e => {
 });
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'gsearch') { S.gq = t.value; const pos = t.selectionStart; render(); const x = $('#gsearch'); if (x) { x.focus(); x.setSelectionRange(pos, pos); } return; }
   if (t.id === 'search') { S.q = t.value; const pos = t.selectionStart; render(); const s = $('#search'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } }
   if (t.id === 'exThr') $('#thrV').textContent = Math.round(t.value * 100) + '%';
   if (t.id === 'exSens') $('#sensV').textContent = Math.round(t.value * 100);
